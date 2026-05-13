@@ -42,6 +42,9 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 - `Bridge Core`、命令处理、审批管理、内存状态存储、日志。
 - `MockCodexAdapter`。
 - `ExecCodexAdapter` 初版，用于后续通过 `codex exec --json` 做真实 Codex CLI 验证。
+- `ExecCodexAdapter` 已完成真实 Codex CLI 中间件调用验证。
+- 真实 Codex 模式启动时必须检测 Codex 是否可用，并允许选择历史会话或创建新会话。
+- 真实 Codex 模式启动时必须允许选择权限模式：审批模式或完全权限；完全权限必须明确提示危险并要求确认。
 - `WeixinAdapter` 第一版：已实现二维码登录 API 入口、登录确认轮询、账号 token 本地存储、文本 `sendmessage` 请求、微信入站消息到通用 `ChannelMessage` 的转换。
 - `WeixinAdapter` 真实扫码登录和真实微信收发仍需用户后续协助测试。
 - 本地单元测试、集成测试和中文测试报告。

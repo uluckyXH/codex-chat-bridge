@@ -109,7 +109,10 @@ Terminal / Weixin / future channels
 - `WeixinAdapter` 已进入第二阶段初版：二维码登录 API、登录确认轮询、账号 token 文件存储、文本 `sendmessage`、入站消息映射已经实现并通过 fake-fetch 测试。
 - 真实微信扫码登录、`getupdates` 长轮询闭环和真实微信收发需要用户后续协助测试。
 - `MockCodexAdapter` 用于稳定测试审批、阶段性事件和命令。
-- `ExecCodexAdapter` 已具备解析 `codex exec --json` 的基础能力，真实 Codex CLI 联调作为下一步硬化项。
+- `ExecCodexAdapter` 已具备解析 `codex exec --json` 的基础能力，并已通过中间件终端通道完成真实 Codex CLI 联调。
+- 中间件启动真实 Codex 模式时会先检测 `codex --version`，不可用则停止启动。
+- 真实 Codex 模式支持启动时选择历史 Codex 会话或创建新会话。
+- 真实 Codex 模式支持启动时选择权限模式：`approval` 使用 `--ask-for-approval on-request --sandbox workspace-write`，`full` 使用 `--dangerously-bypass-approvals-and-sandbox` 并要求危险确认。
 
 ## 3.0 通用渠道协议
 
@@ -498,6 +501,19 @@ src/channels/<channel-id>/
 - 从源码看，exec 模式遇到 command execution、file change、permissions 等 server request approval 时会拒绝处理；因此它不适合实现“微信中批准/拒绝 Codex 操作”的完整体验。
 
 适合第一阶段最小可用版本。
+
+当前实现状态：
+
+- 已实现 `ExecCodexAdapter`。
+- 已实现 `codex --version` 可用性检测。
+- 已实现从 `$CODEX_HOME/session_index.jsonl` 和 `$CODEX_HOME/sessions/**/*.jsonl` 发现历史会话。
+- 已实现 `terminal codex` 启动时的会话选择与权限模式选择。
+- 已用中间件真实调用 `codex exec --json` 并收到回复。
+
+限制：
+
+- `codex exec` 是非交互 CLI，能够设置审批/沙箱参数，但它不是完整 Codex 客户端协议。
+- 要把 Codex 的 command/file/permissions approval request 完整转成微信 `/approve`、`/deny`，仍应继续实现 app-server adapter。
 
 ### 5.2 方案 B：`@openai/codex-sdk`
 

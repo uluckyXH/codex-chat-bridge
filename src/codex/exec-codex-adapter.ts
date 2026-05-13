@@ -8,9 +8,11 @@ import type {
   CodexSessionSummary,
   StartSessionInput,
 } from "./types.js";
+import { buildCodexRootArgs, type CodexRunPolicy } from "./codex-cli.js";
 
 export interface ExecCodexAdapterOptions {
   codexBin?: string;
+  runPolicy?: CodexRunPolicy;
 }
 
 interface ExecSessionRecord {
@@ -23,10 +25,12 @@ interface ExecSessionRecord {
 
 export class ExecCodexAdapter implements CodexAdapter {
   private readonly codexBin: string;
+  private readonly runPolicy: CodexRunPolicy;
   private readonly sessions = new Map<string, ExecSessionRecord>();
 
   constructor(options: ExecCodexAdapterOptions = {}) {
     this.codexBin = options.codexBin ?? "codex";
+    this.runPolicy = options.runPolicy ?? { permissionMode: "approval", sandbox: "workspace-write" };
   }
 
   async startSession(input: StartSessionInput): Promise<CodexSession> {
@@ -131,10 +135,11 @@ export class ExecCodexAdapter implements CodexAdapter {
   }
 
   private buildArgs(stored: ExecSessionRecord, prompt: string): string[] {
+    const rootArgs = buildCodexRootArgs(this.runPolicy);
     if (stored.actualThreadId) {
-      return ["exec", "resume", "--json", "--skip-git-repo-check", "--all", stored.actualThreadId, prompt];
+      return [...rootArgs, "exec", "resume", "--json", "--skip-git-repo-check", "--all", stored.actualThreadId, prompt];
     }
-    return ["exec", "--json", "--cd", stored.session.cwd, "--skip-git-repo-check", prompt];
+    return [...rootArgs, "exec", "--json", "--cd", stored.session.cwd, "--skip-git-repo-check", prompt];
   }
 }
 

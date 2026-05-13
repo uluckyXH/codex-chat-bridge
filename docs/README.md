@@ -74,7 +74,7 @@ npm run cli:terminal:mock
 npm run cli:terminal:codex
 ```
 
-其中 `cli:terminal:mock` 是本地终端通道，作用是模拟微信消息进入中间件；真实微信登录、收消息和发消息仍属于第二阶段。
+其中 `cli:terminal:mock` 是本地终端通道加 MockCodex，作用是模拟微信消息进入中间件；`cli:terminal:codex` 会先检测真实 Codex CLI，然后让用户选择会话和权限模式，再通过 `codex exec --json` 与真实 Codex 通信。
 
 第二阶段本地验证入口：
 

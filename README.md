@@ -15,6 +15,7 @@ Current status:
 - Git management rules are documented in `docs/git-management.zh-CN.md`.
 - An English draft is also available at `docs/requirements.md`.
 - Phase 1 implementation has started: generic channel protocol, mock channel, terminal channel, bridge core, command handling, approval manager, mock Codex adapter, initial `codex exec --json` adapter, CLI mock flow, and tests are present.
+- Real Codex CLI communication has been verified through the middleware with `terminal codex` and `codex exec --json`.
 - Phase 2 Weixin work has started: QR login API, local account token store, text `sendmessage`, and inbound message mapping are implemented with fake-fetch tests. Real Weixin login still requires user-assisted scanning.
 
 Useful local commands:
