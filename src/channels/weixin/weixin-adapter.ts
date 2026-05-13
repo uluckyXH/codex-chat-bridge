@@ -52,6 +52,7 @@ interface ActiveLogin {
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const DEFAULT_BOT_TYPE = "3";
+const SESSION_EXPIRED_ERRCODE = -14;
 
 export class WeixinAdapter implements ChannelAdapter {
   readonly id = "weixin";
@@ -324,6 +325,15 @@ export class WeixinAdapter implements ChannelAdapter {
           getUpdatesBuf,
           timeoutMs: this.longPollTimeoutMs,
         });
+        if (response.ret === SESSION_EXPIRED_ERRCODE || response.errcode === SESSION_EXPIRED_ERRCODE) {
+          this.status = {
+            ...this.status,
+            state: "login_required",
+            account: account.accountId,
+            lastError: "weixin session expired, login required",
+          };
+          return;
+        }
         if ((response.ret ?? 0) !== 0 || (response.errcode ?? 0) !== 0) {
           throw new Error(`getupdates failed: ret=${response.ret ?? 0} errcode=${response.errcode ?? 0} ${response.errmsg ?? ""}`);
         }

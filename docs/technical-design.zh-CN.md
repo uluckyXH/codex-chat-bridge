@@ -226,6 +226,7 @@ WeixinAdapter implements ChannelAdapter
 - 登录 token 默认保存在项目根目录下 `state/weixin/`，该目录被 Git 忽略。
 - 账号 ID 会做文件名安全归一化，例如 `abc@im.bot` 归一化为 `abc-im-bot`。
 - `context_token` 会从微信入站消息带入 `ChannelTarget.context.contextToken`，发送回复时回传给 `sendmessage`。
+- 当前没有定时刷新 token 的协议；登录后复用服务端返回的 `bot_token`。如果 `getupdates` 返回 session 失效码 `-14`，通道状态切换为 `login_required`，停止当前轮询，等待用户重新扫码登录。旧 token 会保留，用于下一次二维码登录时作为 `local_token_list` 传给服务端识别已绑定账号。
 
 它不负责：
 

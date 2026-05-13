@@ -137,3 +137,44 @@ test("WeixinAdapter submits verify code when QR login requires pairing code", as
   assert.equal(store.loadAccount("def-im-bot")?.token, "token-2");
   assert.ok(statusUrls.some((url) => url.includes("verify_code=1234")));
 });
+
+test("WeixinAdapter marks channel login_required when getupdates reports expired session", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-expired",
+    baseUrl: "https://api.example",
+    savedAt: new Date().toISOString(),
+  });
+  const fetchImpl: FetchLike = async (input) => {
+    const url = String(input);
+    if (url.includes("notifystart")) return jsonResponse({});
+    if (url.includes("getupdates")) {
+      return jsonResponse({ ret: -14, errcode: -14, errmsg: "session expired" });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    longPollTimeoutMs: 1,
+    apiOptions: { fetch: fetchImpl },
+  });
+
+  await adapter.start();
+  await waitFor(async () => (await adapter.getStatus()).state === "login_required");
+
+  const status = await adapter.getStatus();
+  assert.equal(status.state, "login_required");
+  assert.equal(status.account, "abc-im-bot");
+  assert.match(status.lastError ?? "", /session expired/);
+});
+
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting for condition");
+}
