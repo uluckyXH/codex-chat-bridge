@@ -33,6 +33,7 @@ export interface CodexSessionSummary {
   id: string;
   routeKey?: string;
   title?: string;
+  cwd?: string;
   status: CodexSessionStatus;
   updatedAt: string;
 }

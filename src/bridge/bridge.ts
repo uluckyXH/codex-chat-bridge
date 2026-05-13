@@ -77,7 +77,10 @@ export class Bridge {
         await this.channel.sendText(target, await this.statusText(message.routeKey));
         return;
       case "sessions":
-        await this.channel.sendText(target, await this.sessionsText(message.routeKey));
+        await this.channel.sendText(target, await this.sessionsText(args[0]?.toLowerCase() === "all" ? undefined : message.routeKey));
+        return;
+      case "all-sessions":
+        await this.channel.sendText(target, await this.sessionsText(undefined));
         return;
       case "use":
       case "resume":
@@ -118,7 +121,7 @@ export class Bridge {
       title: `channel:${message.routeKey}`,
     });
     this.state.bindSession(message.routeKey, session);
-    await this.channel.sendText(target, `已创建新 Codex 会话\nSession: ${session.id}\nStatus: idle`);
+    await this.channel.sendText(target, `已创建新 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
     return session;
   }
 
@@ -186,7 +189,7 @@ export class Bridge {
     try {
       const session = await this.codex.resumeSession(sessionId);
       this.state.bindSession(message.routeKey, session);
-      await this.channel.sendText(target, `已绑定 Codex 会话\nSession: ${session.id}\nStatus: idle`);
+      await this.channel.sendText(target, `已绑定 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
     } catch (error) {
       await this.channel.sendText(target, error instanceof Error ? error.message : String(error));
     }
@@ -238,28 +241,37 @@ export class Bridge {
       `Channel: ${channelStatus.channelId} ${channelStatus.state}`,
       `Codex: ${sessionStatus.type}`,
       `Session: ${binding?.sessionId ?? "none"}`,
+      binding ? `Cwd: ${this.state.getSession(binding.sessionId)?.session.cwd ?? "unknown"}` : undefined,
       `Pending approvals: ${approvals.length}`,
       channelStatus.lastError ? `Last channel error: ${channelStatus.lastError}` : undefined,
     ].filter(Boolean).join("\n");
   }
 
-  private async sessionsText(routeKey: string): Promise<string> {
+  private async sessionsText(routeKey?: string): Promise<string> {
     const localSessions = this.state.listSessions(routeKey);
     const codexSessions = await this.codex.listSessions(routeKey);
     const seen = new Set<string>();
-    const lines = ["当前上下文 Codex 会话:"];
+    const lines = [routeKey ? "当前上下文 Codex 会话:" : "全部可发现 Codex 会话:"];
     for (const stored of localSessions) {
       seen.add(stored.session.id);
-      lines.push(`- ${stored.session.id} ${stored.status.type} ${stored.updatedAt}`);
+      lines.push(this.formatSessionLine(stored.session.id, stored.status.type, stored.updatedAt, stored.session.cwd, stored.session.title));
     }
     for (const session of codexSessions) {
       if (seen.has(session.id)) continue;
-      lines.push(`- ${session.id} ${session.status.type} ${session.updatedAt}`);
+      lines.push(this.formatSessionLine(session.id, session.status.type, session.updatedAt, session.cwd, session.title));
     }
     if (lines.length === 1) {
       lines.push("无。发送 /new 创建新会话，或 /resume <session> 绑定已有会话。");
     }
     return lines.join("\n");
+  }
+
+  private formatSessionLine(id: string, status: string, updatedAt: string, cwd?: string, title?: string): string {
+    const parts = [`- ${id}`, status];
+    if (updatedAt) parts.push(updatedAt);
+    if (title) parts.push(title);
+    if (cwd) parts.push(`cwd=${cwd}`);
+    return parts.join(" ");
   }
 
   private whoamiText(message: ChannelMessage): string {
@@ -294,6 +306,8 @@ export class Bridge {
       "/new - 创建新 Codex 会话",
       "/status - 查看状态",
       "/sessions - 列出当前上下文会话",
+      "/sessions all - 列出全部可发现 Codex 会话",
+      "/all-sessions - 同 /sessions all",
       "/resume <session> - 恢复并绑定已有会话",
       "/use <session> - 切换到已有会话",
       "/whoami - 查看当前通道身份",

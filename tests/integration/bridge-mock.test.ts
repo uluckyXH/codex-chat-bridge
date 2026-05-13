@@ -37,6 +37,26 @@ test("Bridge handles new session, prompt, status, and approval over mock channel
   assert.deepEqual(codex.resolvedApprovals, [{ approvalKey, decision: "approve" }]);
 });
 
+test("Bridge exposes all sessions command for channel users", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/new", { conversationId: "main" });
+  await channel.emitText("/new", { conversationId: "other" });
+  await channel.emitText("/help", { conversationId: "main" });
+  await channel.emitText("/sessions all", { conversationId: "main" });
+  await channel.emitText("/all-sessions", { conversationId: "main" });
+  await bridge.stop();
+
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("/sessions all - 列出全部可发现 Codex 会话")));
+  const allSessionsMessages = channel.sentMessages.filter((message) => message.text.startsWith("全部可发现 Codex 会话"));
+  assert.equal(allSessionsMessages.length, 2);
+  assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-1")));
+  assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-2")));
+});
+
 test("Bridge binds first route to initial session when provided", async () => {
   const channel = new MockChannelAdapter();
   const codex = new MockCodexAdapter();

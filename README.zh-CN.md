@@ -1,0 +1,67 @@
+# Codex 微信中间件
+
+这是一个轻量中间件项目，用来把 Codex 接入可插拔聊天渠道。第一条渠道是微信，微信通讯能力来自 `@tencent-weixin/openclaw-weixin` 包的拆解与适配。
+
+本项目运行时不依赖 OpenClaw CLI、OpenClaw gateway、OpenClaw host runtime 或 OpenClaw channel runtime。`openclaw-weixin` 只作为微信通讯能力的源码、协议和适配参考。
+
+## 当前状态
+
+- 已建立 Node.js + TypeScript 项目骨架。
+- 已保存官方 npm 包归档到 `openclaw-weixin-npm/`。
+- 已建立通用 `ChannelAdapter` 协议，后续其他渠道可按同一协议接入。
+- 已实现 Mock、Terminal、Weixin 三类通道适配器。
+- 已实现 Bridge Core、命令路由、审批管理、内存状态和基础日志。
+- 已实现 `codex exec --json` 适配器，并通过终端通道验证真实 Codex CLI 通信。
+- 已实现微信二维码登录入口、账号凭证本地保存、文本发送和 `getupdates` 轮询基础能力。
+- `weixin codex` 启动时会检查 Codex 可用性和微信登录态；已登录会跳过二维码，未登录会进入扫码登录。
+
+## 常用命令
+
+```bash
+npm test
+npm run cli:mock
+npm run cli:terminal:mock
+npm run cli:terminal:codex
+npm run cli:weixin:status
+npm run cli:weixin:login
+npm run cli:weixin:codex
+```
+
+真实 Codex 模式支持启动参数：
+
+```bash
+npm run cli:terminal:codex -- --session new --permission approval --cwd ./workspaces/demo
+npm run cli:weixin:codex -- --session last --permission approval
+```
+
+- `--session new|last|<id>`：创建新会话、恢复最近会话或绑定指定 Codex 会话。
+- `--cwd <dir>` / `--workdir <dir>`：只用于新会话；目录不存在会自动创建。
+- `--permission approval|full`：选择审批模式或完全权限。
+- `--yes-dangerously-full`：非交互确认完全权限。完全权限会跳过审批和沙箱，风险很高。
+
+交互启动时，如果选择新会话，会展示默认工作目录。用户输入新目录时，目录不存在会自动创建；如果选择历史会话，中间件会使用该 Codex 会话历史记录里的工作目录。
+
+## 微信侧命令
+
+- `/help`：查看命令。
+- `/new`：为当前微信上下文创建新的 Codex 会话。
+- `/status`：查看 Bridge、微信通道、Codex 状态和当前工作目录。
+- `/sessions`：查看当前微信上下文绑定过的会话。
+- `/sessions all` 或 `/all-sessions`：查看全部可发现 Codex 历史会话 ID。
+- `/resume <session>` / `/use <session>`：恢复并绑定指定 Codex 会话。
+- `/approve <id>`、`/approve-session <id>`、`/deny <id>`、`/cancel [id]`：处理 Codex 审批或取消当前任务。
+
+## 文档
+
+- [docs/README.md](docs/README.md)：文档索引。
+- [docs/requirements.zh-CN.md](docs/requirements.zh-CN.md)：中文需求文档。
+- [docs/technical-design.zh-CN.md](docs/technical-design.zh-CN.md)：中文技术设计。
+- [docs/development-and-test.zh-CN.md](docs/development-and-test.zh-CN.md)：开发与测试规范。
+- [docs/git-management.zh-CN.md](docs/git-management.zh-CN.md)：Git 管理规范。
+- [reports/tests/](reports/tests/)：中文测试报告。
+
+## 参考文件
+
+- `openclaw-weixin-npm/tencent-weixin-openclaw-weixin-2.4.3.tgz`
+- `openclaw-weixin-npm/extracted/openclaw-weixin-2.4.3/`
+- `references/openai-codex/`

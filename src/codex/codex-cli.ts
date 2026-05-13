@@ -83,7 +83,14 @@ export function discoverCodexSessions(options: DiscoverCodexSessionsOptions = {}
   }
   return [...byId.values()]
     .sort((a, b) => Date.parse(b.updatedAt ?? "") - Date.parse(a.updatedAt ?? ""))
-    .slice(0, options.limit ?? 10);
+    .slice(0, options.limit);
+}
+
+export function findCodexSessionById(
+  sessionId: string,
+  options: Omit<DiscoverCodexSessionsOptions, "limit"> = {},
+): DiscoveredCodexSession | undefined {
+  return discoverCodexSessions(options).find((session) => session.id === sessionId);
 }
 
 export function parseSessionIndexLine(line: string): DiscoveredCodexSession | undefined {

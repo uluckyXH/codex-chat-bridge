@@ -45,6 +45,8 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 - `ExecCodexAdapter` 已完成真实 Codex CLI 中间件调用验证。
 - 真实 Codex 模式启动时必须检测 Codex 是否可用，并允许选择历史会话或创建新会话。
 - 真实 Codex 模式启动时必须允许选择权限模式：审批模式或完全权限；完全权限必须明确提示危险并要求确认。
+- 真实 Codex 模式启动时，如果选择创建新会话，必须展示默认工作目录；用户可以输入新工作目录，目录不存在时由中间件创建。
+- 真实 Codex 模式启动时，如果选择历史会话，不再询问新工作目录，必须尽量恢复该 Codex 会话历史记录中的原工作目录。
 - `WeixinAdapter` 第一版：已实现二维码登录 API 入口、登录确认轮询、账号 token 本地存储、文本 `sendmessage` 请求、微信入站消息到通用 `ChannelMessage` 的转换。
 - `WeixinAdapter` 真实扫码登录和真实微信收发仍需用户后续协助测试。
 - 本地单元测试、集成测试和中文测试报告。
@@ -196,6 +198,7 @@ Git 管理要求：
 - `/cancel`：取消或中断当前 Codex 任务。
 - `/resume`：恢复或重新绑定已有 Codex 会话。
 - `/sessions`：列出当前微信上下文最近的 Codex 会话。
+- `/sessions all` 或 `/all-sessions`：列出全部可发现 Codex 历史会话，方便微信用户获得会话 ID 后执行 `/resume` 或 `/use`。
 - `/use <session>`：切换到指定会话。
 - `/clear`：清理微信侧临时状态，不删除持久化 Codex 历史。
 - `/debug`：管理员诊断命令，输出更详细的通道、状态和错误信息。

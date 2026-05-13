@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCodexRootArgs, discoverCodexSessions, parseSessionIndexLine } from "../../src/codex/codex-cli.js";
+import { buildCodexRootArgs, discoverCodexSessions, findCodexSessionById, parseSessionIndexLine } from "../../src/codex/codex-cli.js";
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "codex-cli-test-"));
@@ -54,4 +54,20 @@ test("discoverCodexSessions merges session index and rollout metadata", () => {
   assert.equal(sessions[0].threadName, "旧名称");
   assert.equal(sessions[0].cwd, "/tmp/project");
   assert.equal(sessions[1].id, "thread-2");
+});
+
+test("findCodexSessionById returns discovered session cwd", () => {
+  const root = tempDir();
+  const sessionDir = path.join(root, "sessions", "2026", "05", "14");
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(path.join(sessionDir, "rollout-thread-lookup.jsonl"), `${JSON.stringify({
+    timestamp: "2026-05-14T01:00:00Z",
+    type: "session_meta",
+    payload: { id: "thread-lookup", cwd: "/tmp/lookup", timestamp: "2026-05-14T01:00:00Z" },
+  })}\n`, "utf-8");
+
+  const session = findCodexSessionById("thread-lookup", { codexHome: root });
+
+  assert.equal(session?.id, "thread-lookup");
+  assert.equal(session?.cwd, "/tmp/lookup");
 });

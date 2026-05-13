@@ -79,6 +79,7 @@ export class MockCodexAdapter implements CodexAdapter {
         id: stored.session.id,
         routeKey: stored.routeKey,
         title: stored.session.title,
+        cwd: stored.session.cwd,
         status: stored.status,
         updatedAt: new Date().toISOString(),
       }));

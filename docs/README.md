@@ -19,6 +19,9 @@
 - `requirements.md`
   早期英文需求草稿。保留作参考，不作为当前主设计依据。
 
+- `../README.zh-CN.md` 和 `../README.en.md`
+  项目根目录的中英文 README，面向快速启动、命令说明和当前状态。
+
 ## 当前项目定位
 
 本项目是一个独立轻量中间件：
@@ -75,6 +78,8 @@ npm run cli:terminal:codex
 ```
 
 其中 `cli:terminal:mock` 是本地终端通道加 MockCodex，作用是模拟微信消息进入中间件；`cli:terminal:codex` 会先检测真实 Codex CLI，然后让用户选择会话和权限模式，再通过 `codex exec --json` 与真实 Codex 通信。
+
+真实 Codex 模式在创建新会话时会展示默认工作目录，用户可输入其他目录；目录不存在时会自动创建。选择历史会话时不询问新工作目录，而是使用 Codex 历史 session 元数据里的原工作目录。
 
 第二阶段本地验证入口：
 

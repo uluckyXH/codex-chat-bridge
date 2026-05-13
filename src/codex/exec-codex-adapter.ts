@@ -8,11 +8,12 @@ import type {
   CodexSessionSummary,
   StartSessionInput,
 } from "./types.js";
-import { buildCodexRootArgs, type CodexRunPolicy } from "./codex-cli.js";
+import { buildCodexRootArgs, discoverCodexSessions, findCodexSessionById, type CodexRunPolicy } from "./codex-cli.js";
 
 export interface ExecCodexAdapterOptions {
   codexBin?: string;
   runPolicy?: CodexRunPolicy;
+  codexHome?: string;
 }
 
 interface ExecSessionRecord {
@@ -26,11 +27,13 @@ interface ExecSessionRecord {
 export class ExecCodexAdapter implements CodexAdapter {
   private readonly codexBin: string;
   private readonly runPolicy: CodexRunPolicy;
+  private readonly codexHome?: string;
   private readonly sessions = new Map<string, ExecSessionRecord>();
 
   constructor(options: ExecCodexAdapterOptions = {}) {
     this.codexBin = options.codexBin ?? "codex";
     this.runPolicy = options.runPolicy ?? { permissionMode: "approval", sandbox: "workspace-write" };
+    this.codexHome = options.codexHome;
   }
 
   async startSession(input: StartSessionInput): Promise<CodexSession> {
@@ -53,11 +56,12 @@ export class ExecCodexAdapter implements CodexAdapter {
     const stored = this.sessions.get(sessionId);
     if (stored) return stored.session;
     const now = new Date().toISOString();
+    const discovered = findCodexSessionById(sessionId, { codexHome: this.codexHome });
     const session: CodexSession = {
       id: sessionId,
-      cwd: process.cwd(),
-      title: `codex:${sessionId}`,
-      createdAt: now,
+      cwd: discovered?.cwd ?? process.cwd(),
+      title: discovered?.threadName ?? `codex:${sessionId}`,
+      createdAt: discovered?.updatedAt ?? now,
     };
     this.sessions.set(session.id, {
       session,
@@ -125,13 +129,27 @@ export class ExecCodexAdapter implements CodexAdapter {
   }
 
   async listSessions(routeKey?: string): Promise<CodexSessionSummary[]> {
-    return [...this.sessions.values()].filter((record) => (routeKey ? record.routeKey === routeKey : true)).map((record) => ({
+    const localSessions = [...this.sessions.values()].filter((record) => (routeKey ? record.routeKey === routeKey : true)).map((record) => ({
       id: record.session.id,
       routeKey: record.routeKey,
       title: record.session.title,
+      cwd: record.session.cwd,
       status: record.status,
       updatedAt: record.updatedAt,
     }));
+    if (routeKey) return localSessions;
+
+    const seen = new Set(localSessions.map((session) => session.id));
+    const discoveredSessions = discoverCodexSessions({ codexHome: this.codexHome })
+      .filter((session) => !seen.has(session.id))
+      .map((session) => ({
+        id: session.id,
+        title: session.threadName,
+        cwd: session.cwd,
+        status: { type: "unknown" as const, detail: "history" },
+        updatedAt: session.updatedAt ?? "",
+      }));
+    return [...localSessions, ...discoveredSessions];
   }
 
   private buildArgs(stored: ExecSessionRecord, prompt: string): string[] {

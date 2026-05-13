@@ -5,15 +5,23 @@ import { Bridge } from "./bridge/bridge.js";
 import { MockChannelAdapter } from "./channels/mock/mock-channel-adapter.js";
 import { TerminalChannelAdapter } from "./channels/terminal/terminal-channel-adapter.js";
 import { WeixinAdapter } from "./channels/weixin/weixin-adapter.js";
-import { checkCodexCli, discoverCodexSessions, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
+import { checkCodexCli, discoverCodexSessions, findCodexSessionById, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
 import { ExecCodexAdapter } from "./codex/exec-codex-adapter.js";
 import { MockCodexAdapter } from "./codex/mock-codex-adapter.js";
+import { resolveNewSessionWorkdir } from "./codex/workdir.js";
 import { ConsoleLogger } from "./logging/logger.js";
 
 interface StartupOptions {
   session?: string;
   permission?: CodexPermissionMode;
   yesDangerouslyFull?: boolean;
+  cwd?: string;
+}
+
+interface PreparedCodexStartup {
+  policy: CodexRunPolicy;
+  sessionId?: string;
+  cwd: string;
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -116,6 +124,10 @@ function parseStartupOptions(args: string[]): StartupOptions {
       options.permission = value;
     } else if (arg === "--yes-dangerously-full") {
       options.yesDangerouslyFull = true;
+    } else if (arg === "--cwd" || arg === "--workdir") {
+      const value = args[++index];
+      if (!value) throw new Error(`${arg} 需要目录参数`);
+      options.cwd = value;
     } else {
       throw new Error(`未知启动参数: ${arg}`);
     }
@@ -125,13 +137,13 @@ function parseStartupOptions(args: string[]): StartupOptions {
 
 async function runTerminalBridge(mode: "mock" | "codex", options: StartupOptions = {}): Promise<void> {
   const channel = new TerminalChannelAdapter();
-  const startup = mode === "codex" ? await prepareCodexStartup(options) : { policy: undefined, sessionId: undefined };
+  const startup = mode === "codex" ? await prepareCodexStartup(options) : { policy: undefined, sessionId: undefined, cwd: process.cwd() };
   const codex = mode === "codex" ? new ExecCodexAdapter({ runPolicy: startup.policy }) : new MockCodexAdapter();
   const bridge = new Bridge({
     channel,
     codex,
     logger: new ConsoleLogger(false),
-    cwd: process.cwd(),
+    cwd: startup.cwd,
   });
 
   await bridge.start();
@@ -154,7 +166,7 @@ async function runWeixinCodexBridge(options: StartupOptions = {}): Promise<void>
     channel,
     codex,
     logger: new ConsoleLogger(false),
-    cwd: process.cwd(),
+    cwd: startup.cwd,
     initialSessionId: startup.sessionId,
   });
 
@@ -206,7 +218,7 @@ function waitForShutdownSignal(): Promise<void> {
   });
 }
 
-async function prepareCodexStartup(options: StartupOptions): Promise<{ policy: CodexRunPolicy; sessionId?: string }> {
+async function prepareCodexStartup(options: StartupOptions): Promise<PreparedCodexStartup> {
   const status = await checkCodexCli();
   if (!status.available) {
     throw new Error(`Codex 不可用: ${status.error ?? "unknown error"}`);
@@ -221,8 +233,11 @@ async function prepareCodexStartup(options: StartupOptions): Promise<{ policy: C
       sandbox: permissionMode === "approval" ? "workspace-write" : undefined,
     };
     const sessions = discoverCodexSessions({ limit: 10 });
-    const sessionId = await resolveSessionChoice(options, rl, sessions);
-    return { policy, sessionId };
+    const sessionChoice = await resolveSessionChoice(options, rl, sessions);
+    const cwd = sessionChoice.sessionId
+      ? resolveExistingSessionCwd(sessionChoice, options.cwd)
+      : await resolveStartupWorkdir(options, rl);
+    return { policy, sessionId: sessionChoice.sessionId, cwd };
   } finally {
     rl?.close();
   }
@@ -264,12 +279,17 @@ async function resolveSessionChoice(
   options: StartupOptions,
   rl: Interface | undefined,
   sessions: DiscoveredCodexSession[],
-): Promise<string | undefined> {
+): Promise<{ sessionId?: string; session?: DiscoveredCodexSession }> {
   if (options.session && options.session !== "new") {
-    if (options.session === "last") return sessions[0]?.id;
-    return options.session;
+    if (options.session === "last") {
+      return { sessionId: sessions[0]?.id, session: sessions[0] };
+    }
+    return {
+      sessionId: options.session,
+      session: sessions.find((session) => session.id === options.session) ?? findCodexSessionById(options.session),
+    };
   }
-  if (options.session === "new" || !rl) return undefined;
+  if (options.session === "new" || !rl) return {};
   console.log("Codex 会话:");
   console.log("0. 创建新的会话记录");
   sessions.forEach((session, index) => {
@@ -279,12 +299,48 @@ async function resolveSessionChoice(
     console.log(`${index + 1}. ${session.id}${name}${updated}${cwd}`);
   });
   const answer = (await rl.question("请选择会话 [0]: ")).trim();
-  if (!answer || answer === "0" || answer.toLowerCase() === "new") return undefined;
+  if (!answer || answer === "0" || answer.toLowerCase() === "new") return {};
   const index = Number.parseInt(answer, 10);
   if (Number.isInteger(index) && index >= 1 && index <= sessions.length) {
-    return sessions[index - 1].id;
+    return { sessionId: sessions[index - 1].id, session: sessions[index - 1] };
   }
-  return answer;
+  return {
+    sessionId: answer,
+    session: sessions.find((session) => session.id === answer) ?? findCodexSessionById(answer),
+  };
+}
+
+async function resolveStartupWorkdir(options: StartupOptions, rl?: Interface): Promise<string> {
+  const defaultCwd = process.cwd();
+  let input = options.cwd;
+  if (!input && rl) {
+    console.log(`新 Codex 会话默认工作目录: ${defaultCwd}`);
+    input = await rl.question("请输入新会话工作目录 [默认当前目录]: ");
+  }
+  const resolved = resolveNewSessionWorkdir(input, defaultCwd);
+  if (resolved.created) {
+    console.log(`工作目录不存在，已创建: ${resolved.cwd}`);
+  }
+  console.log(`新 Codex 会话工作目录: ${resolved.cwd}`);
+  return resolved.cwd;
+}
+
+function resolveExistingSessionCwd(
+  choice: { sessionId?: string; session?: DiscoveredCodexSession },
+  ignoredCwd?: string,
+): string {
+  if (ignoredCwd) {
+    console.log("已选择已有 Codex 会话，启动参数 --cwd/--workdir 将被忽略。");
+  }
+  const cwd = choice.session?.cwd ?? process.cwd();
+  if (choice.session?.cwd) {
+    console.log(`已选择已有 Codex 会话: ${choice.sessionId}`);
+    console.log(`会话历史工作目录: ${cwd}`);
+  } else {
+    console.log(`已选择已有 Codex 会话: ${choice.sessionId}`);
+    console.log(`未在 Codex 历史记录中找到工作目录，暂用当前目录兜底: ${cwd}`);
+  }
+  return cwd;
 }
 
 function printHelp(): void {
@@ -296,6 +352,7 @@ function printHelp(): void {
     "  codex-wechat-bridge terminal mock  启动本地终端通道 + MockCodex",
     "  codex-wechat-bridge terminal codex 启动本地终端通道 + codex exec",
     "    --session new|last|<id>          选择新会话或已有 Codex 会话",
+    "    --cwd <dir>, --workdir <dir>     设置新会话工作目录；目录不存在会自动创建",
     "    --permission approval|full       设置审批模式或完全权限",
     "    --yes-dangerously-full           非交互确认完全权限",
     "  codex-wechat-bridge weixin codex   启动真实微信通道 + codex exec",
