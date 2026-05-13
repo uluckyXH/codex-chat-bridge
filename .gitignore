@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime state
+data/
+/state/
+logs/
+*.log
+
+# Local channel credentials and login state
+*.session.json
+*.token.json
+*.cookies.json
+weixin-state/
+
+# Generated or local reference extracts
+openclaw-weixin-npm/extracted/
+
+# Large nested reference repositories are kept locally, not committed.
+references/openai-codex/
+
+# Temporary files
+tmp/
+.tmp/

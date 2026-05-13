@@ -1,0 +1,26 @@
+{
+  "name": "codex-weixin-middleware",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight middleware between Codex and pluggable chat channels, with Weixin as the first channel adapter.",
+  "type": "module",
+  "bin": {
+    "codex-wechat-bridge": "./dist/src/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests/unit/*.test.js dist/tests/integration/*.test.js",
+    "test:unit": "npm run build && node --test dist/tests/unit/*.test.js",
+    "test:integration": "npm run build && node --test dist/tests/integration/*.test.js",
+    "cli:mock": "npm run build && node dist/src/cli.js codex test",
+    "cli:terminal:mock": "npm run build && node dist/src/cli.js terminal mock",
+    "cli:weixin:status": "npm run build && node dist/src/cli.js weixin status"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}
