@@ -13,6 +13,7 @@ This project is OpenClaw-free at runtime. It must not depend on OpenClaw CLI, Op
 - Bridge Core, command routing, approval management, memory state, and baseline logging are implemented.
 - The `codex exec --json` adapter is implemented and has been verified through the terminal channel with the real Codex CLI.
 - Weixin QR login, local account token persistence, text send, and basic `getupdates` polling support are implemented.
+- Codex image forwarding is implemented. The bridge detects local image paths, `file://` paths, Markdown images, and remote image URLs in progress/final output; Weixin uploads and sends images, while channels without media support fall back to a text reference.
 - The `weixin codex` startup entry checks Codex availability and Weixin login state. It skips QR login when credentials are valid and starts QR login when credentials are missing.
 - The `weixin codex` daemon terminal prints inbound Weixin messages and outbound Codex replies so the running conversation can be observed locally.
 - History session lists prefer Codex SQLite titles or first user messages, then fall back to `session_index.jsonl` and rollout metadata.
@@ -46,6 +47,8 @@ During interactive startup, choosing a new session displays the default working 
 The current `codex exec --json` mode can reuse Codex history sessions, but it does not live-sync Weixin-side interaction into another already-open Codex CLI or Codex App window. Real-time multi-view synchronization needs a later app-server/event-subscription adapter, or a middleware-owned observer UI where the middleware is the single session entry point.
 
 Normal messages from the same channel context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/cancel`, and approval commands still run immediately. Current progress updates come from events visible in `codex exec --json`, including turn start, reasoning summaries, command/tool/file-change summaries, and final replies. Finer same-turn steering needs a later app-server adapter.
+
+When Codex output contains an accessible image reference, the bridge sends the text first and then attempts a media message. It currently recognizes `.png`, `.jpg/.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif/.tiff`, and `.svg`; local files must exist. Weixin image send uses `getuploadurl`, CDN upload, and `image_item`; unsupported channels or failed media sends get a text fallback with the image location.
 
 ## Channel Commands
 

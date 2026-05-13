@@ -175,7 +175,9 @@ export function parseExecJsonLine(line: string, sessionId: string, turnId: strin
         type?: string;
         text?: string;
         command?: string;
+        aggregated_output?: string;
         status?: string;
+        exit_code?: number;
         changes?: Array<{ path?: string; kind?: string }>;
         items?: Array<{ text?: string; completed?: boolean }>;
         server?: string;
@@ -213,7 +215,9 @@ function progressTextFromExecItem(eventType: string, item: {
   type?: string;
   text?: string;
   command?: string;
+  aggregated_output?: string;
   status?: string;
+  exit_code?: number;
   changes?: Array<{ path?: string; kind?: string }>;
   items?: Array<{ text?: string; completed?: boolean }>;
   server?: string;
@@ -227,7 +231,9 @@ function progressTextFromExecItem(eventType: string, item: {
     return `正在执行命令: ${item.command}`;
   }
   if (item.type === "command_execution" && eventType === "item.completed" && item.command) {
-    return `命令${item.status === "failed" ? "失败" : "完成"}: ${item.command}`;
+    const status = item.status === "failed" || item.exit_code ? "失败" : "完成";
+    const output = imageOutputHint(item.aggregated_output);
+    return output ? `命令${status}: ${item.command}\n输出:\n${output}` : `命令${status}: ${item.command}`;
   }
   if (item.type === "file_change" && eventType === "item.completed" && item.changes?.length) {
     const paths = item.changes.map((change) => change.path).filter(Boolean).slice(0, 5).join(", ");
@@ -244,4 +250,11 @@ function progressTextFromExecItem(eventType: string, item: {
     return active ? `计划更新: ${active}` : undefined;
   }
   return undefined;
+}
+
+function imageOutputHint(output: string | undefined, maxLength = 600): string | undefined {
+  const text = output?.trim();
+  if (!text || !/\.(?:png|jpe?g|gif|webp|bmp|tiff?|svg)\b/i.test(text)) return undefined;
+  if (text.length <= maxLength) return text;
+  return text.slice(-maxLength);
 }

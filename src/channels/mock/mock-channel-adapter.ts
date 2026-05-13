@@ -2,6 +2,7 @@ import type {
   ChannelAdapter,
   ChannelCapabilities,
   ChannelLoginResult,
+  ChannelMedia,
   ChannelMessage,
   ChannelMessageHandler,
   ChannelStatus,
@@ -18,12 +19,26 @@ export interface SentMockMessage {
   result: SendResult;
 }
 
+export interface SentMockMedia {
+  target: ChannelTarget;
+  media: ChannelMedia;
+  options?: SendOptions;
+  result: SendResult;
+}
+
+export interface MockChannelAdapterOptions {
+  media?: boolean;
+}
+
 export class MockChannelAdapter implements ChannelAdapter {
   readonly id = "mock";
   readonly label = "Mock Channel";
   readonly sentMessages: SentMockMessage[] = [];
+  readonly sentMedia: SentMockMedia[] = [];
   private handler?: ChannelMessageHandler;
   private state: ChannelStatus = { channelId: this.id, state: "stopped" };
+
+  constructor(private readonly options: MockChannelAdapterOptions = {}) {}
 
   async start(): Promise<void> {
     this.state = { ...this.state, state: "connected" };
@@ -45,7 +60,7 @@ export class MockChannelAdapter implements ChannelAdapter {
   getCapabilities(): ChannelCapabilities {
     return {
       text: true,
-      media: false,
+      media: this.options.media ?? false,
       typing: false,
       direct: true,
       group: true,
@@ -66,6 +81,17 @@ export class MockChannelAdapter implements ChannelAdapter {
       deliveredAt: new Date().toISOString(),
     };
     this.sentMessages.push({ target, text, options, result });
+    this.state = { ...this.state, lastOutboundAt: result.deliveredAt };
+    return result;
+  }
+
+  async sendMedia(target: ChannelTarget, media: ChannelMedia, options?: SendOptions): Promise<SendResult> {
+    const result: SendResult = {
+      channelId: this.id,
+      messageId: `mock-media-${this.sentMedia.length + 1}`,
+      deliveredAt: new Date().toISOString(),
+    };
+    this.sentMedia.push({ target, media, options, result });
     this.state = { ...this.state, lastOutboundAt: result.deliveredAt };
     return result;
   }

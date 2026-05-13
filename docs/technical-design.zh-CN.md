@@ -187,6 +187,25 @@ type ChannelCapabilities = {
 };
 ```
 
+```ts
+type ChannelMedia = {
+  type: "image" | "voice" | "file" | "video";
+  path?: string;
+  url?: string;
+  name?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  caption?: string;
+};
+```
+
+媒体策略：
+
+- Bridge 只依赖 `ChannelMedia`，不直接引用微信协议字段。
+- Codex 输出中的图片引用会由 Bridge 抽取成 `ChannelMedia`，当前覆盖 Markdown 图片、本地绝对路径、`./`/`../`/带目录的相对路径、`file://` 和 HTTP(S) 图片 URL。
+- 通道声明 `capabilities.media=true` 且实现 `sendMedia` 时，Bridge 会调用媒体发送；否则退回文本说明，避免图片路径静默丢失。
+- 同一轮输出中的媒体按 `path/url` 去重，避免阶段性输出和最终回复重复发送同一张截图。
+
 ### 3.0.3 Route Key 规范
 
 所有渠道都必须生成稳定 route key：
@@ -226,6 +245,7 @@ WeixinAdapter implements ChannelAdapter
 
 - 不 import `openclaw/plugin-sdk`，避免重新引入 OpenClaw runtime。
 - 参考 `openclaw-weixin@2.4.3` 的 HTTP JSON API，直接实现 `get_bot_qrcode`、`get_qrcode_status`、`getupdates`、`sendmessage`、`notifystart`、`notifystop` 的薄客户端。
+- 图片发送参考 `openclaw-weixin@2.4.3` 的媒体链路：`getuploadurl` 申请上传参数，本地文件用 AES-128-ECB 加密后上传 CDN，再通过 `sendmessage` 发送 `image_item`。远程图片 URL 会先下载到本地临时文件再走同一链路。
 - 登录轮询支持 `need_verifycode` 分支；CLI 会提示输入手机微信显示的配对数字后继续轮询。
 - 登录 token 默认保存在项目根目录下 `state/weixin/`，该目录被 Git 忽略。
 - 账号 ID 会做文件名安全归一化，例如 `abc@im.bot` 归一化为 `abc-im-bot`。
@@ -884,7 +904,7 @@ CLI JSONL adapter 可用事件：
 
 - `turn.started`：Bridge 发送“Codex 开始处理”。
 - `item.completed` + `reasoning`：发送 `Codex 进度`，内容为 Codex 提供的 reasoning summary。
-- `item.started/completed` + `command_execution`：发送命令开始或完成摘要。
+- `item.started/completed` + `command_execution`：发送命令开始或完成摘要；当 `aggregated_output` 中出现图片路径/URL 后缀时，把相关输出片段带入进度文本，交给 Bridge 的媒体抽取逻辑处理。
 - `item.completed` + `file_change`：发送文件变更摘要。
 - `mcp_tool_call`、`web_search`、`todo_list`：发送工具、搜索或计划摘要。
 
@@ -915,6 +935,7 @@ app-server adapter 可用事件：
 - 文件变更默认发送文件列表摘要，不直接发送完整 diff。
 - turn 完成后发送最终结果，并标记为“完成”。
 - turn 失败或中断时发送明确状态。
+- 图片等媒体引用会跟随阶段性输出和最终回复被抽取；文本先发送，媒体后发送。若微信媒体上传失败，会退回一条包含路径/URL、类型和 MIME 信息的文本说明。
 
 ### 8.2.3 用户可见模式
 

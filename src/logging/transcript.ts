@@ -1,10 +1,11 @@
 import type { Writable } from "node:stream";
 import { stdout } from "node:process";
-import type { ChannelMessage, ChannelTarget } from "../protocol/channel.js";
+import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../protocol/channel.js";
 
 export interface TranscriptSink {
   inbound(message: ChannelMessage, text: string): void;
   outbound(target: ChannelTarget, text: string): void;
+  outboundMedia?(target: ChannelTarget, media: ChannelMedia): void;
 }
 
 export class ConsoleTranscriptSink implements TranscriptSink {
@@ -28,11 +29,24 @@ export class ConsoleTranscriptSink implements TranscriptSink {
     ]);
   }
 
+  outboundMedia(target: ChannelTarget, media: ChannelMedia): void {
+    this.writeBlock([
+      this.header("OUT", target.channelId),
+      `To: ${target.conversation.kind}:${target.conversation.id}`,
+      `Media: ${media.type} ${media.name ?? media.path ?? media.url ?? ""}`,
+      media.path ? `Path: ${media.path}` : undefined,
+      media.url ? `Url: ${media.url}` : undefined,
+      media.mimeType ? `Mime: ${media.mimeType}` : undefined,
+      media.sizeBytes !== undefined ? `Size: ${media.sizeBytes} bytes` : undefined,
+      media.caption ? `Caption: ${media.caption}` : undefined,
+    ]);
+  }
+
   private header(direction: "IN" | "OUT", channelId: string): string {
     return `[${new Date().toISOString()}] [${channelId} ${direction}]`;
   }
 
-  private writeBlock(lines: string[]): void {
-    this.output.write(`\n${lines.join("\n")}\n`);
+  private writeBlock(lines: Array<string | undefined>): void {
+    this.output.write(`\n${lines.filter((line): line is string => Boolean(line)).join("\n")}\n`);
   }
 }

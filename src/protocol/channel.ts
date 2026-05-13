@@ -36,6 +36,7 @@ export interface ChannelAttachment {
   name?: string;
   mimeType?: string;
   sizeBytes?: number;
+  caption?: string;
   raw?: unknown;
 }
 
@@ -86,6 +87,8 @@ export interface ChannelMedia {
   url?: string;
   name?: string;
   mimeType?: string;
+  sizeBytes?: number;
+  caption?: string;
 }
 
 export interface SendOptions {

@@ -5,6 +5,7 @@ export interface StoredWeixinAccount {
   accountId: string;
   token: string;
   baseUrl: string;
+  cdnBaseUrl?: string;
   userId?: string;
   savedAt: string;
   getUpdatesBuf?: string;

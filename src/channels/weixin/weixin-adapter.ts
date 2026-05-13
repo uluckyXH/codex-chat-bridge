@@ -2,6 +2,7 @@ import type {
   ChannelAdapter,
   ChannelCapabilities,
   ChannelLoginResult,
+  ChannelMedia,
   ChannelMessage,
   ChannelMessageHandler,
   ChannelStatus,
@@ -16,10 +17,18 @@ import {
   WeixinMessageItemType,
   WeixinMessageState,
   WeixinMessageType,
+  type WeixinMessageItem,
   type WeixinMessage,
   type WeixinQrStatusResponse,
   type WeixinSendMessageRequest,
 } from "./weixin-types.js";
+import {
+  DEFAULT_WEIXIN_CDN_BASE_URL,
+  buildWeixinImageItem,
+  materializeChannelMedia,
+  mediaTypeForPath,
+  uploadLocalMediaToWeixin,
+} from "./weixin-media.js";
 
 export interface WeixinAdapterOptions {
   sourceVersion?: string;
@@ -30,6 +39,7 @@ export interface WeixinAdapterOptions {
   api?: WeixinApiClient;
   apiOptions?: WeixinApiClientOptions;
   store?: WeixinAccountStore;
+  cdnBaseUrl?: string;
   verifyCodeProvider?: (prompt: string) => Promise<string>;
   pollOnStart?: boolean;
   longPollTimeoutMs?: number;
@@ -60,6 +70,7 @@ export class WeixinAdapter implements ChannelAdapter {
   private readonly sourceVersion: string;
   private readonly botType: string;
   private readonly baseUrl: string;
+  private readonly cdnBaseUrl: string;
   private readonly accountId?: string;
   private readonly api: WeixinApiClient;
   private readonly store: WeixinAccountStore;
@@ -78,6 +89,7 @@ export class WeixinAdapter implements ChannelAdapter {
     this.sourceVersion = options.sourceVersion ?? "2.4.3";
     this.botType = options.botType ?? DEFAULT_BOT_TYPE;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    this.cdnBaseUrl = options.cdnBaseUrl ?? DEFAULT_WEIXIN_CDN_BASE_URL;
     this.accountId = options.accountId;
     this.store = options.store ?? new FileWeixinAccountStore(options.stateDir);
     this.verifyCodeProvider = options.verifyCodeProvider;
@@ -236,6 +248,40 @@ export class WeixinAdapter implements ChannelAdapter {
     };
   }
 
+  async sendMedia(target: ChannelTarget, media: ChannelMedia, _options?: SendOptions): Promise<SendResult> {
+    if (media.type !== "image") {
+      throw new Error(`WeixinAdapter 当前只支持图片媒体发送: ${media.type}`);
+    }
+    const account = this.resolveAccount(target.accountId);
+    if (!account) {
+      throw new Error("WeixinAdapter 未登录：请先运行 weixin login");
+    }
+    const filePath = await materializeChannelMedia({ media, api: this.api });
+    const uploadMediaType = mediaTypeForPath(filePath);
+    if (uploadMediaType !== "IMAGE") {
+      throw new Error(`WeixinAdapter 当前只支持图片媒体发送: ${filePath}`);
+    }
+    const toUserId = target.recipient.id || target.conversation.id;
+    const uploaded = await uploadLocalMediaToWeixin({
+      api: this.api,
+      token: account.token,
+      filePath,
+      toUserId,
+      cdnBaseUrl: account.cdnBaseUrl ?? this.cdnBaseUrl,
+      mediaType: uploadMediaType,
+    });
+    const items: WeixinMessageItem[] = [];
+    const caption = media.caption?.trim();
+    if (caption) items.push({ type: WeixinMessageItemType.TEXT, text_item: { text: caption } });
+    items.push(buildWeixinImageItem(uploaded));
+
+    const result = await this.sendItems(target, account, items);
+    return {
+      ...result,
+      raw: { media, uploaded: { filekey: uploaded.filekey, fileSize: uploaded.fileSize } },
+    };
+  }
+
   hasMessageHandler(): boolean {
     return Boolean(this.handler);
   }
@@ -287,6 +333,7 @@ export class WeixinAdapter implements ChannelAdapter {
       accountId,
       token: response.bot_token,
       baseUrl: response.baseurl || this.baseUrl,
+      cdnBaseUrl: this.cdnBaseUrl,
       userId: response.ilink_user_id,
       savedAt: new Date().toISOString(),
     };
@@ -364,6 +411,46 @@ export class WeixinAdapter implements ChannelAdapter {
       lastError: undefined,
     };
     await this.handler(message);
+  }
+
+  private async sendItems(
+    target: ChannelTarget,
+    account: StoredWeixinAccount,
+    items: WeixinMessageItem[],
+  ): Promise<SendResult> {
+    const contextToken = typeof target.context?.contextToken === "string" ? target.context.contextToken : undefined;
+    let lastClientId = "";
+    let lastBody: WeixinSendMessageRequest | undefined;
+    for (const item of items) {
+      lastClientId = `codex-weixin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const body: WeixinSendMessageRequest = {
+        msg: {
+          from_user_id: "",
+          to_user_id: target.recipient.id || target.conversation.id,
+          client_id: lastClientId,
+          message_type: WeixinMessageType.BOT,
+          message_state: WeixinMessageState.FINISH,
+          item_list: [item],
+          context_token: contextToken,
+        },
+      };
+      await this.api.sendMessage({ token: account.token, body });
+      lastBody = body;
+    }
+    const deliveredAt = new Date().toISOString();
+    this.status = {
+      ...this.status,
+      state: "connected",
+      account: account.accountId,
+      lastOutboundAt: deliveredAt,
+      lastError: undefined,
+    };
+    return {
+      channelId: this.id,
+      messageId: lastClientId,
+      deliveredAt,
+      raw: lastBody,
+    };
   }
 
   private resolveAccount(accountId = this.accountId): StoredWeixinAccount | undefined {

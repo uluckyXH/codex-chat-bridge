@@ -20,15 +20,62 @@ export const WeixinMessageState = {
   FINISH: 2,
 } as const;
 
+export const WeixinUploadMediaType = {
+  IMAGE: 1,
+  VIDEO: 2,
+  FILE: 3,
+  VOICE: 4,
+} as const;
+
 export interface WeixinTextItem {
   text?: string;
+}
+
+export interface WeixinCdnMedia {
+  encrypt_query_param?: string;
+  aes_key?: string;
+  encrypt_type?: number;
+  full_url?: string;
+}
+
+export interface WeixinImageItem {
+  media?: WeixinCdnMedia;
+  thumb_media?: WeixinCdnMedia;
+  aeskey?: string;
+  url?: string;
+  mid_size?: number;
+  thumb_size?: number;
+  thumb_height?: number;
+  thumb_width?: number;
+  hd_size?: number;
+}
+
+export interface WeixinFileItem {
+  media?: WeixinCdnMedia;
+  file_name?: string;
+  md5?: string;
+  len?: string;
+}
+
+export interface WeixinVideoItem {
+  media?: WeixinCdnMedia;
+  video_size?: number;
+  play_length?: number;
+  video_md5?: string;
+  thumb_media?: WeixinCdnMedia;
+  thumb_size?: number;
+  thumb_height?: number;
+  thumb_width?: number;
 }
 
 export interface WeixinMessageItem {
   type?: number;
   msg_id?: string;
   text_item?: WeixinTextItem;
+  image_item?: WeixinImageItem;
   voice_item?: { text?: string };
+  file_item?: WeixinFileItem;
+  video_item?: WeixinVideoItem;
 }
 
 export interface WeixinMessage {
@@ -80,4 +127,24 @@ export interface WeixinQrStatusResponse {
 
 export interface WeixinSendMessageRequest {
   msg?: WeixinMessage;
+}
+
+export interface WeixinGetUploadUrlRequest {
+  filekey?: string;
+  media_type?: number;
+  to_user_id?: string;
+  rawsize?: number;
+  rawfilemd5?: string;
+  filesize?: number;
+  thumb_rawsize?: number;
+  thumb_rawfilemd5?: string;
+  thumb_filesize?: number;
+  no_need_thumb?: boolean;
+  aeskey?: string;
+}
+
+export interface WeixinGetUploadUrlResponse {
+  upload_param?: string;
+  thumb_upload_param?: string;
+  upload_full_url?: string;
 }

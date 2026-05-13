@@ -4,11 +4,15 @@ import { Bridge } from "../../src/bridge/bridge.js";
 import { MockChannelAdapter } from "../../src/channels/mock/mock-channel-adapter.js";
 import { MockCodexAdapter } from "../../src/codex/mock-codex-adapter.js";
 import type { TranscriptSink } from "../../src/logging/transcript.js";
-import type { ChannelMessage, ChannelTarget } from "../../src/protocol/channel.js";
+import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../../src/protocol/channel.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 class CapturingTranscriptSink implements TranscriptSink {
   readonly inboundEvents: Array<{ message: ChannelMessage; text: string }> = [];
   readonly outboundEvents: Array<{ target: ChannelTarget; text: string }> = [];
+  readonly outboundMediaEvents: Array<{ target: ChannelTarget; media: ChannelMedia }> = [];
 
   inbound(message: ChannelMessage, text: string): void {
     this.inboundEvents.push({ message, text });
@@ -16,6 +20,10 @@ class CapturingTranscriptSink implements TranscriptSink {
 
   outbound(target: ChannelTarget, text: string): void {
     this.outboundEvents.push({ target, text });
+  }
+
+  outboundMedia(target: ChannelTarget, media: ChannelMedia): void {
+    this.outboundMediaEvents.push({ target, media });
   }
 }
 
@@ -90,6 +98,27 @@ test("Bridge emits transcript events for inbound channel text and outbound repli
   assert.equal(transcript.inboundEvents[0].text, "你好，打印到终端");
   assert.ok(transcript.outboundEvents.some((event) => event.text.includes("Codex 开始处理")));
   assert.ok(transcript.outboundEvents.some((event) => event.text === "Mock Codex 回复: 你好，打印到终端"));
+});
+
+test("Bridge forwards generated image refs as channel media and transcript media events", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-media-test-"));
+  const imagePath = path.join(root, "screenshot.png");
+  fs.writeFileSync(imagePath, "png");
+  const channel = new MockChannelAdapter({ media: true });
+  const codex = new MockCodexAdapter();
+  const transcript = new CapturingTranscriptSink();
+  const bridge = new Bridge({ channel, codex, cwd: root, transcript });
+
+  await bridge.start();
+  await channel.emitText(`请查看截图 ${imagePath}`);
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.equal(channel.sentMedia.length, 1);
+  assert.equal(channel.sentMedia[0].media.path, imagePath);
+  assert.equal(channel.sentMedia[0].media.mimeType, "image/png");
+  assert.equal(transcript.outboundMediaEvents.length, 1);
+  assert.equal(transcript.outboundMediaEvents[0].media.path, imagePath);
 });
 
 test("Bridge queues normal prompts for the same route while keeping commands responsive", async () => {

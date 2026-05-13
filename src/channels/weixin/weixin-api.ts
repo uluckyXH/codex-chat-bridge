@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 import type {
   WeixinBaseInfo,
   WeixinGetUpdatesResponse,
+  WeixinGetUploadUrlRequest,
+  WeixinGetUploadUrlResponse,
   WeixinQrStartResponse,
   WeixinQrStatusResponse,
   WeixinSendMessageRequest,
@@ -84,6 +86,56 @@ export class WeixinApiClient {
         base_info: this.baseInfo(),
       },
     });
+  }
+
+  async getUploadUrl(params: {
+    token: string;
+    body: WeixinGetUploadUrlRequest;
+    timeoutMs?: number;
+  }): Promise<WeixinGetUploadUrlResponse> {
+    return this.postJson<WeixinGetUploadUrlResponse>({
+      endpoint: "ilink/bot/getuploadurl",
+      token: params.token,
+      timeoutMs: params.timeoutMs,
+      body: params.body,
+    });
+  }
+
+  async uploadCdnBuffer(params: {
+    url: string;
+    body: Buffer;
+    timeoutMs?: number;
+  }): Promise<{ downloadParam: string }> {
+    const response = await this.fetchWithTimeout(params.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: new Uint8Array(params.body),
+    }, params.timeoutMs);
+    if (response.status >= 400) {
+      const text = await response.text();
+      throw new Error(`cdn upload ${response.status}: ${text}`);
+    }
+    const downloadParam = response.headers.get("x-encrypted-param");
+    if (!downloadParam) {
+      throw new Error("cdn upload response missing x-encrypted-param header");
+    }
+    return { downloadParam };
+  }
+
+  async fetchBinary(params: {
+    url: string;
+    timeoutMs?: number;
+  }): Promise<{ body: Buffer; contentType?: string }> {
+    const response = await this.fetchWithTimeout(params.url, {
+      method: "GET",
+    }, params.timeoutMs);
+    if (!response.ok) {
+      throw new Error(`fetch binary ${response.status}: ${await response.text()}`);
+    }
+    return {
+      body: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") ?? undefined,
+    };
   }
 
   async notifyStart(params: { token: string; timeoutMs?: number }): Promise<void> {

@@ -67,6 +67,27 @@ test("parseExecJsonLine maps exec progress items", () => {
     turnId: "turn-1",
     text: "正在执行命令: npm test",
   });
+
+  assert.deepEqual(parseExecJsonLine(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "cmd-2",
+        type: "command_execution",
+        command: "node screenshot.js",
+        aggregated_output: "saved screenshot: /tmp/codex-shot.png\n",
+        exit_code: 0,
+        status: "completed",
+      },
+    }),
+    "local-session",
+    "turn-1",
+  )?.event, {
+    type: "assistant.progress",
+    sessionId: "local-session",
+    turnId: "turn-1",
+    text: "命令完成: node screenshot.js\n输出:\nsaved screenshot: /tmp/codex-shot.png",
+  });
 });
 
 test("ExecCodexAdapter lists sqlite titles for discovered sessions", async (t) => {

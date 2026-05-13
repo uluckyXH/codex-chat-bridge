@@ -5,9 +5,10 @@ import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
 import { SilentLogger } from "../logging/logger.js";
 import type { TranscriptSink } from "../logging/transcript.js";
-import type { ChannelAdapter, ChannelMessage, ChannelTarget } from "../protocol/channel.js";
+import type { ChannelAdapter, ChannelMedia, ChannelMessage, ChannelTarget } from "../protocol/channel.js";
 import { replyTargetFromMessage } from "../protocol/channel.js";
 import { MemoryStateStore } from "../state/memory-state-store.js";
+import { extractMediaRefs } from "./media-extractor.js";
 
 export interface BridgeOptions {
   channel: ChannelAdapter;
@@ -213,11 +214,14 @@ export class Bridge {
       remainingQueued > 0 ? `Queue: 后面还有 ${remainingQueued} 条` : undefined,
     ].filter(Boolean).join("\n"));
     let finalText = "";
+    const sentMediaKeys = new Set<string>();
     for await (const event of this.codex.run(session.id, prompt)) {
       if (event.type === "turn.started") {
         this.state.setSessionStatus(session.id, { type: "running", turnId: event.turnId });
       } else if (event.type === "assistant.progress") {
-        await this.sendText(target, `Codex 进度:\n${truncateForChannel(event.text)}`);
+        const progressText = `Codex 进度:\n${truncateForChannel(event.text)}`;
+        await this.sendText(target, progressText);
+        await this.sendExtractedMedia(target, event.text, session.cwd, sentMediaKeys);
       } else if (event.type === "assistant.delta") {
         finalText += event.text;
       } else if (event.type === "assistant.completed") {
@@ -238,6 +242,7 @@ export class Bridge {
     }
     if (finalText) {
       await this.sendText(target, finalText);
+      await this.sendExtractedMedia(target, finalText, session.cwd, sentMediaKeys);
     }
   }
 
@@ -296,6 +301,39 @@ export class Bridge {
   private async sendText(target: ChannelTarget, text: string): Promise<void> {
     await this.channel.sendText(target, text);
     this.transcript?.outbound(target, text);
+  }
+
+  private async sendExtractedMedia(
+    target: ChannelTarget,
+    text: string,
+    cwd: string,
+    sentMediaKeys: Set<string>,
+  ): Promise<void> {
+    const mediaItems = extractMediaRefs(text, cwd);
+    for (const media of mediaItems) {
+      const key = mediaKey(media);
+      if (!key || sentMediaKeys.has(key)) continue;
+      sentMediaKeys.add(key);
+      await this.sendMedia(target, media);
+    }
+  }
+
+  private async sendMedia(target: ChannelTarget, media: ChannelMedia): Promise<void> {
+    const capabilities = this.channel.getCapabilities();
+    if (capabilities.media && this.channel.sendMedia) {
+      try {
+        await this.channel.sendMedia(target, media);
+        this.transcript?.outboundMedia?.(target, media);
+        return;
+      } catch (error) {
+        this.logger.warn("channel media send failed, falling back to text", {
+          channel: this.channel.id,
+          media: media.path ?? media.url ?? media.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    await this.sendText(target, fallbackMediaText(media, capabilities.media));
   }
 
   private async statusText(routeKey: string): Promise<string> {
@@ -394,4 +432,23 @@ function truncateForChannel(text: string, maxLength = 600): string {
   const normalized = text.trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+function mediaKey(media: ChannelMedia): string | undefined {
+  return media.path ?? media.url;
+}
+
+function fallbackMediaText(media: ChannelMedia, mediaCapability: boolean): string {
+  const location = media.path ?? media.url ?? media.name ?? "unknown";
+  const reason = mediaCapability ? "通道媒体发送失败，已退回文本引用。" : "当前通道不支持媒体发送，已退回文本引用。";
+  return [
+    "Codex 生成了媒体文件",
+    `Type: ${media.type}`,
+    media.name ? `Name: ${media.name}` : undefined,
+    media.mimeType ? `Mime: ${media.mimeType}` : undefined,
+    media.sizeBytes !== undefined ? `Size: ${media.sizeBytes} bytes` : undefined,
+    media.caption ? `Caption: ${media.caption}` : undefined,
+    `Location: ${location}`,
+    reason,
+  ].filter(Boolean).join("\n");
 }
