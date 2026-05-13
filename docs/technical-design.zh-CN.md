@@ -516,11 +516,14 @@ src/channels/<channel-id>/
 - 已实现从 `$CODEX_HOME/session_index.jsonl` 和 `$CODEX_HOME/sessions/**/*.jsonl` 发现历史会话。
 - 已实现 `terminal codex` 启动时的会话选择与权限模式选择。
 - 已用中间件真实调用 `codex exec --json` 并收到回复。
+- `weixin codex` 启动入口已启用运行期 transcript：Bridge 收到微信消息和向微信发送回复时，会同步打印到启动中间件的终端。
 
 限制：
 
 - `codex exec` 是非交互 CLI，能够设置审批/沙箱参数，但它不是完整 Codex 客户端协议。
+- `codex exec --json` 能写入 Codex 历史会话，但不会把微信侧 turn 实时推送到另一个已经打开的 Codex CLI 或 Codex App 窗口；当前只能做到历史会话复用和后续恢复，不保证多端实时同屏。
 - 要把 Codex 的 command/file/permissions approval request 完整转成微信 `/approve`、`/deny`，仍应继续实现 app-server adapter。
+- 如果后续要实现“电脑端 Codex UI 与微信端同一会话实时可见”，应优先评估 `codex app-server` / JSON-RPC adapter，或由中间件统一接管会话并提供自己的观察端。
 
 ### 5.2 方案 B：`@openai/codex-sdk`
 

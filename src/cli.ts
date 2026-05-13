@@ -10,6 +10,7 @@ import { ExecCodexAdapter } from "./codex/exec-codex-adapter.js";
 import { MockCodexAdapter } from "./codex/mock-codex-adapter.js";
 import { resolveNewSessionWorkdir } from "./codex/workdir.js";
 import { ConsoleLogger } from "./logging/logger.js";
+import { ConsoleTranscriptSink } from "./logging/transcript.js";
 
 interface StartupOptions {
   session?: string;
@@ -166,6 +167,7 @@ async function runWeixinCodexBridge(options: StartupOptions = {}): Promise<void>
     channel,
     codex,
     logger: new ConsoleLogger(false),
+    transcript: new ConsoleTranscriptSink(),
     cwd: startup.cwd,
     initialSessionId: startup.sessionId,
   });

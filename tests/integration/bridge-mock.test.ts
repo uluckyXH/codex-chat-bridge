@@ -3,6 +3,21 @@ import assert from "node:assert/strict";
 import { Bridge } from "../../src/bridge/bridge.js";
 import { MockChannelAdapter } from "../../src/channels/mock/mock-channel-adapter.js";
 import { MockCodexAdapter } from "../../src/codex/mock-codex-adapter.js";
+import type { TranscriptSink } from "../../src/logging/transcript.js";
+import type { ChannelMessage, ChannelTarget } from "../../src/protocol/channel.js";
+
+class CapturingTranscriptSink implements TranscriptSink {
+  readonly inboundEvents: Array<{ message: ChannelMessage; text: string }> = [];
+  readonly outboundEvents: Array<{ target: ChannelTarget; text: string }> = [];
+
+  inbound(message: ChannelMessage, text: string): void {
+    this.inboundEvents.push({ message, text });
+  }
+
+  outbound(target: ChannelTarget, text: string): void {
+    this.outboundEvents.push({ target, text });
+  }
+}
 
 test("Bridge handles new session, prompt, status, and approval over mock channel", async () => {
   const channel = new MockChannelAdapter();
@@ -55,6 +70,22 @@ test("Bridge exposes all sessions command for channel users", async () => {
   assert.equal(allSessionsMessages.length, 2);
   assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-1")));
   assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-2")));
+});
+
+test("Bridge emits transcript events for inbound channel text and outbound replies", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const transcript = new CapturingTranscriptSink();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd(), transcript });
+
+  await bridge.start();
+  await channel.emitText("你好，打印到终端");
+  await bridge.stop();
+
+  assert.equal(transcript.inboundEvents.length, 1);
+  assert.equal(transcript.inboundEvents[0].text, "你好，打印到终端");
+  assert.equal(transcript.outboundEvents.length, 1);
+  assert.equal(transcript.outboundEvents[0].text, "Mock Codex 回复: 你好，打印到终端");
 });
 
 test("Bridge binds first route to initial session when provided", async () => {

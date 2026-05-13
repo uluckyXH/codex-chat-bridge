@@ -14,6 +14,7 @@ This project is OpenClaw-free at runtime. It must not depend on OpenClaw CLI, Op
 - The `codex exec --json` adapter is implemented and has been verified through the terminal channel with the real Codex CLI.
 - Weixin QR login, local account token persistence, text send, and basic `getupdates` polling support are implemented.
 - The `weixin codex` startup entry checks Codex availability and Weixin login state. It skips QR login when credentials are valid and starts QR login when credentials are missing.
+- The `weixin codex` daemon terminal prints inbound Weixin messages and outbound Codex replies so the running conversation can be observed locally.
 
 ## Commands
 
@@ -40,6 +41,8 @@ npm run cli:weixin:codex -- --session last --permission approval
 - `--yes-dangerously-full`: non-interactive confirmation for full permission mode. Full mode bypasses approvals and sandboxing and is high risk.
 
 During interactive startup, choosing a new session displays the default working directory. If the user enters a missing directory, the middleware creates it. If an existing session is selected, the middleware uses the working directory recorded in that Codex session history.
+
+The current `codex exec --json` mode can reuse Codex history sessions, but it does not live-sync Weixin-side interaction into another already-open Codex CLI or Codex App window. Real-time multi-view synchronization needs a later app-server/event-subscription adapter, or a middleware-owned observer UI where the middleware is the single session entry point.
 
 ## Channel Commands
 

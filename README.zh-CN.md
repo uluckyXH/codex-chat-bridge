@@ -14,6 +14,7 @@
 - 已实现 `codex exec --json` 适配器，并通过终端通道验证真实 Codex CLI 通信。
 - 已实现微信二维码登录入口、账号凭证本地保存、文本发送和 `getupdates` 轮询基础能力。
 - `weixin codex` 启动时会检查 Codex 可用性和微信登录态；已登录会跳过二维码，未登录会进入扫码登录。
+- `weixin codex` 常驻终端会打印微信入站消息和发回微信的 Codex 回复，方便运行时观察对话流。
 
 ## 常用命令
 
@@ -40,6 +41,8 @@ npm run cli:weixin:codex -- --session last --permission approval
 - `--yes-dangerously-full`：非交互确认完全权限。完全权限会跳过审批和沙箱，风险很高。
 
 交互启动时，如果选择新会话，会展示默认工作目录。用户输入新目录时，目录不存在会自动创建；如果选择历史会话，中间件会使用该 Codex 会话历史记录里的工作目录。
+
+当前 `codex exec --json` 模式会复用 Codex 历史会话，但不会把微信侧交互实时同步到另一个已经打开的 Codex CLI 或 Codex App 窗口。要实现多端实时同屏，需要后续切换到更完整的 Codex app-server/事件订阅方案，或让中间件成为唯一会话入口并提供自己的观察端。
 
 ## 微信侧命令
 

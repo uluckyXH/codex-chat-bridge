@@ -4,6 +4,7 @@ import type { CodexAdapter, CodexSession, CodexSessionStatus } from "../codex/ty
 import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
 import { SilentLogger } from "../logging/logger.js";
+import type { TranscriptSink } from "../logging/transcript.js";
 import type { ChannelAdapter, ChannelMessage, ChannelTarget } from "../protocol/channel.js";
 import { replyTargetFromMessage } from "../protocol/channel.js";
 import { MemoryStateStore } from "../state/memory-state-store.js";
@@ -14,6 +15,7 @@ export interface BridgeOptions {
   state?: MemoryStateStore;
   approvals?: ApprovalManager;
   logger?: Logger;
+  transcript?: TranscriptSink;
   cwd?: string;
   initialSessionId?: string;
 }
@@ -24,6 +26,7 @@ export class Bridge {
   private readonly state: MemoryStateStore;
   private readonly approvals: ApprovalManager;
   private readonly logger: Logger;
+  private readonly transcript?: TranscriptSink;
   private readonly cwd: string;
   private initialSessionId?: string;
 
@@ -33,6 +36,7 @@ export class Bridge {
     this.state = options.state ?? new MemoryStateStore();
     this.approvals = options.approvals ?? new ApprovalManager();
     this.logger = options.logger ?? new SilentLogger();
+    this.transcript = options.transcript;
     this.cwd = options.cwd ?? process.cwd();
     this.initialSessionId = options.initialSessionId;
   }
@@ -51,6 +55,7 @@ export class Bridge {
   async handleMessage(message: ChannelMessage): Promise<void> {
     const text = message.text?.trim();
     if (!text) return;
+    this.transcript?.inbound(message, text);
     const target = replyTargetFromMessage(message);
     const command = parseCommand(text);
     if (command.isCommand) {
@@ -68,29 +73,29 @@ export class Bridge {
   ): Promise<void> {
     switch (name) {
       case "help":
-        await this.channel.sendText(target, this.helpText());
+        await this.sendText(target, this.helpText());
         return;
       case "new":
         await this.createNewSession(message, target);
         return;
       case "status":
-        await this.channel.sendText(target, await this.statusText(message.routeKey));
+        await this.sendText(target, await this.statusText(message.routeKey));
         return;
       case "sessions":
-        await this.channel.sendText(target, await this.sessionsText(args[0]?.toLowerCase() === "all" ? undefined : message.routeKey));
+        await this.sendText(target, await this.sessionsText(args[0]?.toLowerCase() === "all" ? undefined : message.routeKey));
         return;
       case "all-sessions":
-        await this.channel.sendText(target, await this.sessionsText(undefined));
+        await this.sendText(target, await this.sessionsText(undefined));
         return;
       case "use":
       case "resume":
         await this.resumeOrUseSession(message, target, args[0]);
         return;
       case "whoami":
-        await this.channel.sendText(target, this.whoamiText(message));
+        await this.sendText(target, this.whoamiText(message));
         return;
       case "debug":
-        await this.channel.sendText(target, await this.debugText(message.routeKey));
+        await this.sendText(target, await this.debugText(message.routeKey));
         return;
       case "approve":
         await this.resolveApproval(message, target, args[0], "approve");
@@ -110,7 +115,7 @@ export class Bridge {
         }
         return;
       default:
-        await this.channel.sendText(target, `未知命令: /${name}\n发送 /help 查看可用命令。`);
+        await this.sendText(target, `未知命令: /${name}\n发送 /help 查看可用命令。`);
     }
   }
 
@@ -121,7 +126,7 @@ export class Bridge {
       title: `channel:${message.routeKey}`,
     });
     this.state.bindSession(message.routeKey, session);
-    await this.channel.sendText(target, `已创建新 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
+    await this.sendText(target, `已创建新 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
     return session;
   }
 
@@ -164,16 +169,16 @@ export class Bridge {
           detail: event.approval.reason ?? event.approval.kind,
         });
         const pending = this.approvals.create(message.routeKey, message.sender.id, event.approval);
-        await this.channel.sendText(target, this.approvals.formatForChannel(pending));
+        await this.sendText(target, this.approvals.formatForChannel(pending));
       } else if (event.type === "turn.completed") {
         this.state.setSessionStatus(session.id, { type: "idle" });
       } else if (event.type === "turn.failed") {
         this.state.setSessionStatus(session.id, { type: "failed", error: event.error });
-        await this.channel.sendText(target, `Codex 执行失败: ${event.error}`);
+        await this.sendText(target, `Codex 执行失败: ${event.error}`);
       }
     }
     if (finalText) {
-      await this.channel.sendText(target, finalText);
+      await this.sendText(target, finalText);
     }
   }
 
@@ -183,15 +188,15 @@ export class Bridge {
     sessionId: string | undefined,
   ): Promise<void> {
     if (!sessionId) {
-      await this.channel.sendText(target, "缺少 Session ID，例如 /resume cdx-123");
+      await this.sendText(target, "缺少 Session ID，例如 /resume cdx-123");
       return;
     }
     try {
       const session = await this.codex.resumeSession(sessionId);
       this.state.bindSession(message.routeKey, session);
-      await this.channel.sendText(target, `已绑定 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
+      await this.sendText(target, `已绑定 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
     } catch (error) {
-      await this.channel.sendText(target, error instanceof Error ? error.message : String(error));
+      await this.sendText(target, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -202,31 +207,36 @@ export class Bridge {
     decision: ApprovalDecision,
   ): Promise<void> {
     if (!approvalKey) {
-      await this.channel.sendText(target, "缺少审批 ID，例如 /approve a001");
+      await this.sendText(target, "缺少审批 ID，例如 /approve a001");
       return;
     }
     try {
       const pending = this.approvals.decide(approvalKey, message.routeKey, decision);
       await this.codex.resolveApproval?.(pending.approvalKey, decision);
-      await this.channel.sendText(target, `审批已处理 [${approvalKey}]: ${decision}`);
+      await this.sendText(target, `审批已处理 [${approvalKey}]: ${decision}`);
     } catch (error) {
-      await this.channel.sendText(target, error instanceof Error ? error.message : String(error));
+      await this.sendText(target, error instanceof Error ? error.message : String(error));
     }
   }
 
   private async cancelSession(message: ChannelMessage, target: ChannelTarget): Promise<void> {
     const binding = this.state.getBinding(message.routeKey);
     if (!binding) {
-      await this.channel.sendText(target, "当前没有活跃 Codex 会话。");
+      await this.sendText(target, "当前没有活跃 Codex 会话。");
       return;
     }
     if (!this.codex.cancel) {
-      await this.channel.sendText(target, "当前 Codex Adapter 不支持取消。");
+      await this.sendText(target, "当前 Codex Adapter 不支持取消。");
       return;
     }
     await this.codex.cancel(binding.sessionId);
     this.state.setSessionStatus(binding.sessionId, { type: "idle" });
-    await this.channel.sendText(target, `已请求取消会话: ${binding.sessionId}`);
+    await this.sendText(target, `已请求取消会话: ${binding.sessionId}`);
+  }
+
+  private async sendText(target: ChannelTarget, text: string): Promise<void> {
+    await this.channel.sendText(target, text);
+    this.transcript?.outbound(target, text);
   }
 
   private async statusText(routeKey: string): Promise<string> {
