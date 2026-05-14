@@ -1,7 +1,8 @@
 import type { ApprovalDecision, PendingApproval } from "../approvals/types.js";
 import { ApprovalManager } from "../approvals/approval-manager.js";
 import type { CodexRunPolicy, CodexRunPolicyStatus } from "../codex/codex-cli.js";
-import type { CodexAdapter, CodexProgressKind, CodexSession, CodexSessionContextUsage, CodexSessionModelInfo, CodexSessionStatus } from "../codex/types.js";
+import type { CodexAdapter, CodexModelOption, CodexModelPolicy, CodexProgressKind, CodexReasoningEffort, CodexSession, CodexSessionContextUsage, CodexSessionModelInfo, CodexSessionStatus } from "../codex/types.js";
+import { CODEX_REASONING_EFFORTS } from "../codex/types.js";
 import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
 import { SilentLogger } from "../logging/logger.js";
@@ -136,6 +137,9 @@ export class Bridge {
         return;
       case "sendfile":
         await this.handleSendFileCommand(message, target, rawText);
+        return;
+      case "model":
+        await this.handleModelCommand(message, target, args);
         return;
       case "permission":
       case "permissions":
@@ -421,6 +425,112 @@ export class Bridge {
     await this.sendText(target, this.progressModeText(message.routeKey));
   }
 
+  private async handleModelCommand(
+    message: ChannelMessage,
+    target: ChannelTarget,
+    args: string[],
+  ): Promise<void> {
+    const listModels = this.codex.listModels?.bind(this.codex);
+    const getModelPolicy = this.codex.getModelPolicy?.bind(this.codex);
+    const setModelPolicy = this.codex.setModelPolicy?.bind(this.codex);
+    if (!listModels || !getModelPolicy || !setModelPolicy) {
+      await this.sendText(target, "当前 Codex Adapter 不支持模型列表或运行时模型切换。");
+      return;
+    }
+
+    const includeHidden = args.some(isModelAllToken);
+    const commandArgs = args.filter((arg) => !isModelAllToken(arg) && !isModelListToken(arg));
+    const binding = this.state.getBinding(message.routeKey);
+    const sessionId = binding?.sessionId;
+    const parsed = parseModelCommandArgs(commandArgs);
+    if (parsed.type === "error") {
+      await this.sendText(target, parsed.message);
+      return;
+    }
+    if (parsed.type === "reset") {
+      setModelPolicy({}, sessionId);
+      await this.sendText(target, [
+        "已清除 Codex 模型覆盖。",
+        `作用范围: ${formatModelScope(sessionId)}`,
+        this.routeWorkers.has(message.routeKey) ? "当前正在运行的任务不会被改写；需要立即生效请先 /stop。" : undefined,
+      ].filter(Boolean).join("\n"));
+      return;
+    }
+
+    let models: CodexModelOption[];
+    try {
+      models = await listModels({ includeHidden });
+    } catch (error) {
+      await this.sendText(target, `获取 Codex 模型列表失败: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    const policy = getModelPolicy(sessionId);
+    const status = binding ? await this.codex.getStatus(binding.sessionId).catch(() => undefined) : undefined;
+
+    if (parsed.type === "list") {
+      await this.sendText(target, this.modelText(models, policy, status?.model, sessionId, includeHidden));
+      return;
+    }
+
+    if (parsed.type === "effort") {
+      const effort = parseReasoningEffort(parsed.effort);
+      if (!effort) {
+        await this.sendText(target, invalidReasoningEffortText(parsed.effort));
+        return;
+      }
+      let currentModel = currentModelOption(models, policy, status?.model);
+      if (!currentModel && !includeHidden) {
+        currentModel = currentModelOption(await listModels({ includeHidden: true }), policy, status?.model);
+      }
+      if (!currentModel) {
+        await this.sendText(target, "无法确认当前模型，不能只设置思考程度。请使用 `/model <模型> <effort>`。");
+        return;
+      }
+      if (!modelSupportsEffort(currentModel, effort)) {
+        await this.sendText(target, unsupportedReasoningEffortText(currentModel, effort));
+        return;
+      }
+      const nextPolicy: CodexModelPolicy = { ...policy, reasoningEffort: effort };
+      setModelPolicy(nextPolicy, sessionId);
+      await this.sendText(target, [
+        "已设置 Codex 思考程度。",
+        `作用范围: ${formatModelScope(sessionId)}`,
+        `Model: \`${nextPolicy.model ?? currentModel.model}\``,
+        `Effort: \`${effort}\``,
+        this.routeWorkers.has(message.routeKey) ? "当前正在运行的任务不会被改写；需要立即生效请先 /stop。" : undefined,
+      ].filter(Boolean).join("\n"));
+      return;
+    }
+
+    const resolved = resolveModelReference(parsed.modelRef, models);
+    if (resolved.type === "error") {
+      await this.sendText(target, resolved.message);
+      return;
+    }
+    const model = resolved.model;
+    const requestedEffort = parsed.effort ? parseReasoningEffort(parsed.effort) : model.defaultReasoningEffort;
+    if (parsed.effort && !requestedEffort) {
+      await this.sendText(target, invalidReasoningEffortText(parsed.effort));
+      return;
+    }
+    if (requestedEffort && !modelSupportsEffort(model, requestedEffort)) {
+      await this.sendText(target, unsupportedReasoningEffortText(model, requestedEffort));
+      return;
+    }
+    const nextPolicy: CodexModelPolicy = {
+      model: model.model,
+      ...(requestedEffort ? { reasoningEffort: requestedEffort } : {}),
+    };
+    setModelPolicy(nextPolicy, sessionId);
+    await this.sendText(target, [
+      "已设置 Codex 模型。",
+      `作用范围: ${formatModelScope(sessionId)}`,
+      `Model: \`${model.model}\`${model.id !== model.model ? ` (id \`${model.id}\`)` : ""}`,
+      `Effort: \`${requestedEffort ?? "default"}\``,
+      this.routeWorkers.has(message.routeKey) ? "当前正在运行的任务不会被改写；需要立即生效请先 /stop。" : undefined,
+    ].filter(Boolean).join("\n"));
+  }
+
   private async handlePermissionCommand(
     message: ChannelMessage,
     target: ChannelTarget,
@@ -634,6 +744,7 @@ export class Bridge {
     const workerRunning = this.routeWorkers.has(routeKey);
     const policyStatus = this.runPolicyStatus(binding?.sessionId);
     const policy = policyStatus?.policy ?? this.codex.getRunPolicy?.(binding?.sessionId);
+    const modelPolicy = this.codex.getModelPolicy?.(binding?.sessionId);
     return [
       "**Codex 状态**",
       `- Session: \`${binding?.sessionId ?? "none"}\``,
@@ -648,6 +759,7 @@ export class Bridge {
       `- Pending approvals: \`${approvals.length}\``,
       ...formatPendingApprovalStatus(approvals.at(-1)),
       `- Progress: \`${this.progressModeFor(routeKey)}\``,
+      modelPolicy ? `- Model override: ${formatModelPolicy(modelPolicy)}` : undefined,
       policy ? `- Permission: \`${formatRunPolicy(policy)}\`` : undefined,
       policyStatus && !policyStatus.interactiveApprovals ? `- Approval: \`${formatApprovalSupport(policyStatus)}\`` : undefined,
       workerRunning && binding ? "- Action: `/stop` 终止当前任务" : undefined,
@@ -724,6 +836,7 @@ export class Bridge {
       ["/debug", "查看调试状态"],
       ["/progress [brief|detailed|silent]", "查看或设置当前上下文进度投递模式"],
       ["/sendfile <任务内容>", "让 Codex 本轮按内部协议声明最终要发送的文件"],
+      ["/model [模型|编号] [effort]", "查看可用模型，或切换当前 Codex session 后续任务的模型和思考程度"],
       ["/permission [approval|full confirm]", "查看或切换当前绑定 Codex session 的权限模式"],
       ["/OK", "批准当前审批"],
       ["/NO [理由]", "拒绝当前审批"],
@@ -760,6 +873,28 @@ export class Bridge {
       "- `detailed`: 发送所有可见进度，包括命令和工具调用细节。",
       "- `silent`: 不发送进度文本，只发送开始、审批和最终回复。",
       "- 文件不会由进度模式自动发送；需要本轮允许发文件时使用 `/sendfile <任务内容>`。",
+    ].join("\n");
+  }
+
+  private modelText(
+    models: CodexModelOption[],
+    policy: CodexModelPolicy,
+    currentModel: CodexSessionModelInfo | undefined,
+    sessionId: string | undefined,
+    includeHidden: boolean,
+  ): string {
+    return [
+      "**模型设置**",
+      `- 作用范围: ${formatModelScope(sessionId)}`,
+      `- 当前模型: ${formatModelInfo(currentModel)}`,
+      `- 模型覆盖: ${formatModelPolicy(policy)}`,
+      `- 列表来源: \`model/list${includeHidden ? " includeHidden=true" : ""}\``,
+      "",
+      "**可用模型**",
+      ...(models.length > 0 ? models.map(formatModelOptionLine) : ["无可用模型。"]),
+      "",
+      "用法: `/model gpt-5.5 xhigh`、`/model 2 high`、`/model effort medium`、`/model default`。",
+      "发送 `/model all` 可包含隐藏模型。",
     ].join("\n");
   }
 
@@ -861,6 +996,163 @@ function formatModelInfo(model: CodexSessionModelInfo | undefined): string {
     model.reasoningEffort !== undefined ? `effort=\`${model.reasoningEffort ?? "default"}\`` : undefined,
   ].filter(Boolean);
   return parts.join(" ");
+}
+
+type ParsedModelCommand =
+  | { type: "list" }
+  | { type: "reset" }
+  | { type: "effort"; effort: string }
+  | { type: "set"; modelRef: string; effort?: string }
+  | { type: "error"; message: string };
+
+function parseModelCommandArgs(args: string[]): ParsedModelCommand {
+  if (args.length === 0) return { type: "list" };
+  const [first = "", second, third, ...rest] = args;
+  if (isModelResetToken(first)) {
+    return args.length === 1 ? { type: "reset" } : { type: "error", message: "清除模型覆盖请使用 `/model default`。" };
+  }
+  if (isEffortKeyword(first)) {
+    if (!second) return { type: "error", message: "缺少思考程度。用法: `/model effort high`。" };
+    if (third || rest.length > 0) return { type: "error", message: "思考程度命令只接受一个值，例如 `/model effort high`。" };
+    return { type: "effort", effort: second };
+  }
+  const tokens = first.toLowerCase() === "model" && second ? [second, third, ...rest].filter((token): token is string => Boolean(token)) : args;
+  const [modelRef, maybeEffortKeyword, maybeEffort, ...extra] = tokens;
+  if (!modelRef) return { type: "list" };
+  if (maybeEffortKeyword && isEffortKeyword(maybeEffortKeyword)) {
+    if (!maybeEffort) return { type: "error", message: "缺少思考程度。用法: `/model <模型> effort high`。" };
+    if (extra.length > 0) return { type: "error", message: `未知参数: ${extra.join(" ")}` };
+    return { type: "set", modelRef, effort: maybeEffort };
+  }
+  if (maybeEffortKeyword && extra.length > 0) return { type: "error", message: `未知参数: ${[maybeEffortKeyword, maybeEffort, ...extra].filter(Boolean).join(" ")}` };
+  return { type: "set", modelRef, ...(maybeEffortKeyword ? { effort: maybeEffortKeyword } : {}) };
+}
+
+function isModelAllToken(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "all" || normalized === "--all" || normalized === "hidden" || normalized === "--hidden";
+}
+
+function isModelListToken(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "list" || normalized === "ls" || normalized === "show";
+}
+
+function isModelResetToken(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "default" || normalized === "reset" || normalized === "clear";
+}
+
+function isEffortKeyword(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "effort" || normalized === "thinking" || normalized === "reasoning";
+}
+
+function parseReasoningEffort(value: string): CodexReasoningEffort | undefined {
+  const normalized = value.trim().toLowerCase();
+  return (CODEX_REASONING_EFFORTS as readonly string[]).includes(normalized)
+    ? normalized as CodexReasoningEffort
+    : undefined;
+}
+
+function invalidReasoningEffortText(value: string): string {
+  return `未知思考程度: \`${value}\`\n可用值: ${CODEX_REASONING_EFFORTS.map((effort) => `\`${effort}\``).join(", ")}。`;
+}
+
+function modelSupportsEffort(model: CodexModelOption, effort: CodexReasoningEffort): boolean {
+  const supported = supportedEfforts(model);
+  return supported.length === 0 || supported.includes(effort);
+}
+
+function supportedEfforts(model: CodexModelOption): CodexReasoningEffort[] {
+  const efforts = model.supportedReasoningEfforts.map((option) => option.reasoningEffort);
+  if (model.defaultReasoningEffort && !efforts.includes(model.defaultReasoningEffort)) efforts.push(model.defaultReasoningEffort);
+  return efforts;
+}
+
+function unsupportedReasoningEffortText(model: CodexModelOption, effort: CodexReasoningEffort): string {
+  const supported = supportedEfforts(model);
+  return [
+    `模型 \`${model.model}\` 不支持思考程度 \`${effort}\`。`,
+    `可用值: ${supported.length > 0 ? supported.map((value) => `\`${value}\``).join(", ") : "`default`"}。`,
+  ].join("\n");
+}
+
+function resolveModelReference(
+  reference: string,
+  models: CodexModelOption[],
+): { type: "ok"; model: CodexModelOption } | { type: "error"; message: string } {
+  const index = Number(reference);
+  if (Number.isInteger(index) && index >= 1 && index <= models.length) {
+    return { type: "ok", model: models[index - 1] };
+  }
+  const normalized = normalizeModelReference(reference);
+  const exact = models.filter((model) => [
+    model.id,
+    model.model,
+    model.displayName,
+  ].some((value) => normalizeModelReference(value) === normalized));
+  if (exact.length > 0) return { type: "ok", model: exact[0] };
+  const candidates = models.filter((model) => [
+    model.id,
+    model.model,
+    model.displayName,
+  ].some((value) => normalizeModelReference(value).includes(normalized)));
+  return {
+    type: "error",
+    message: [
+      `未找到模型: \`${reference}\``,
+      candidates.length > 0 ? `相近模型: ${candidates.slice(0, 6).map(formatModelCandidate).join(", ")}` : undefined,
+      "发送 `/model` 查看当前可用模型；如需隐藏模型，发送 `/model all`。",
+    ].filter(Boolean).join("\n"),
+  };
+}
+
+function currentModelOption(
+  models: CodexModelOption[],
+  policy: CodexModelPolicy,
+  currentModel: CodexSessionModelInfo | undefined,
+): CodexModelOption | undefined {
+  const reference = policy.model ?? currentModel?.model;
+  if (reference) {
+    const resolved = resolveModelReference(reference, models);
+    if (resolved.type === "ok") return resolved.model;
+    return undefined;
+  }
+  return models.find((model) => model.isDefault) ?? models[0];
+}
+
+function formatModelOptionLine(model: CodexModelOption, index: number): string {
+  const badges = [
+    model.isDefault ? "default" : undefined,
+    model.hidden ? "hidden" : undefined,
+  ].filter(Boolean).join(", ");
+  const id = model.id !== model.model ? ` id=\`${model.id}\`` : "";
+  const efforts = supportedEfforts(model).map((effort) => `\`${effort}\``).join(", ") || "`default`";
+  const defaultEffort = model.defaultReasoningEffort ? ` default=\`${model.defaultReasoningEffort}\`` : "";
+  const suffix = badges ? ` (${badges})` : "";
+  return `${index + 1}. \`${model.model}\`${id}${suffix} - ${model.displayName}; efforts: ${efforts}${defaultEffort}`;
+}
+
+function formatModelCandidate(model: CodexModelOption): string {
+  return model.id === model.model ? `\`${model.model}\`` : `\`${model.model}\`/\`${model.id}\``;
+}
+
+function formatModelPolicy(policy: CodexModelPolicy): string {
+  const parts = [
+    policy.model ? `model=\`${policy.model}\`` : undefined,
+    policy.reasoningEffort ? `effort=\`${policy.reasoningEffort}\`` : undefined,
+    policy.serviceTier ? `tier=\`${policy.serviceTier}\`` : undefined,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : "`none`";
+}
+
+function formatModelScope(sessionId?: string): string {
+  return sessionId ? `当前会话 \`${sessionId}\`` : "默认策略（后续新会话）";
+}
+
+function normalizeModelReference(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function formatNumber(value: number): string {

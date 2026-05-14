@@ -51,6 +51,8 @@ The default `codex app-server` mode can reuse Codex history threads and acts as 
 
 Normal messages from the same channel context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/stop`, and approval commands still run immediately. Each task starts with a short "processing" notice and does not repeat the Session ID; use `/status` for session, model, context token usage, and permission details. The default `brief` progress mode sends planning/reasoning, search, and file-change summaries, but suppresses command/tool details. Use `/progress detailed` or `--progress detailed` when full debugging detail is needed.
 
+The Weixin-side `/model` command reads the actual model list from Codex app-server `model/list`; it does not keep a hardcoded catalog. Use `/model` to list models, then `/model gpt-5.5 xhigh` or `/model 2 high` to switch the model and reasoning effort for subsequent turns. Unknown models and unsupported efforts are rejected.
+
 Weixin outbound messages are serialized with a small interval to reduce dropped or hidden rapid-fire progress messages. The default send interval is 1200ms. If `sendmessage` hits rate limiting or a temporary failure, the adapter retries with backoff; only the final failure moves the channel to `degraded` and records `lastError`, instead of logging the request as a successful OUT. While Codex is running, the Weixin channel fetches a `typing_ticket` with `getconfig`, then periodically calls `sendtyping` to keep the peer-side "typing" state visible; it stops typing when the task finishes or `/stop` is used.
 
 Ordinary messages and progress output never auto-send files or images. Local paths, Markdown images, and `file://` references are left as plain text unless the user starts the turn with `/sendfile <task>`. For that turn, the bridge adds an internal instruction to Codex and only parses final-answer lines using `BRIDGE_SEND_FILE: /absolute/path/to/file`. Up to 3 files are sent per turn, and the protocol lines are hidden from the visible reply. Media failures are reported in one aggregate result instead of one fallback message per file.
@@ -71,6 +73,7 @@ To invalidate Weixin login, stop the middleware and delete the whole `state/weix
 - `/resume <session>` / `/use <session>`: resume and bind a Codex session.
 - `/progress [brief|detailed|silent]`: show or set progress delivery mode for the current channel context.
 - `/sendfile <task>`: let Codex declare final files for this turn through the internal bridge protocol; ordinary messages do not auto-send files.
+- `/model [model|number] [effort]`: list app-server models or switch the model and reasoning effort for subsequent turns.
 - `/permission [approval|full confirm]`: show or switch the permission mode for the currently bound Codex session; without a bound session it changes the default for future new sessions.
 - `/OK`: approve the current Codex approval.
 - `/NO [reason]`: deny the current Codex approval and record the reason.

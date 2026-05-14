@@ -6,6 +6,12 @@ import type { ApprovalDecision, ApprovalKind, ApprovalRequest } from "../approva
 import type {
   CodexAdapter,
   CodexEvent,
+  CodexModelListOptions,
+  CodexModelOption,
+  CodexModelPolicy,
+  CodexReasoningEffort,
+  CodexReasoningEffortOption,
+  CodexModelServiceTier,
   CodexProgressKind,
   CodexRunPolicyStatus,
   CodexSession,
@@ -16,6 +22,7 @@ import type {
   CodexSessionSummary,
   StartSessionInput,
 } from "./types.js";
+import { CODEX_REASONING_EFFORTS } from "./types.js";
 import { discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, type CodexRunPolicy, type CodexSandboxMode } from "./codex-cli.js";
 
 export interface AppServerCodexAdapterOptions {
@@ -32,6 +39,7 @@ interface AppServerSessionRecord {
   status: CodexSessionStatus;
   updatedAt: string;
   currentTurnId?: string;
+  baseModel?: CodexSessionModelInfo;
 }
 
 interface JsonRpcRequest {
@@ -87,6 +95,8 @@ export class AppServerCodexAdapter implements CodexAdapter {
   private readonly codexBin: string;
   private defaultRunPolicy: CodexRunPolicy;
   private readonly sessionRunPolicies = new Map<string, CodexRunPolicy>();
+  private defaultModelPolicy: CodexModelPolicy = {};
+  private readonly sessionModelPolicies = new Map<string, CodexModelPolicy>();
   private readonly codexHome?: string;
   private readonly requestTimeoutMs: number;
   private readonly interruptTimeoutMs: number;
@@ -134,7 +144,10 @@ export class AppServerCodexAdapter implements CodexAdapter {
 
   async startSession(input: StartSessionInput): Promise<CodexSession> {
     await this.ensureStarted();
+    const modelPolicy = cloneModelPolicy(this.defaultModelPolicy);
     const response = await this.request<Record<string, unknown>>("thread/start", {
+      model: modelPolicy.model,
+      serviceTier: modelPolicy.serviceTier,
       cwd: input.cwd,
       approvalPolicy: approvalPolicyForRunPolicy(this.defaultRunPolicy),
       approvalsReviewer: approvalsReviewerForRunPolicy(this.defaultRunPolicy),
@@ -151,14 +164,17 @@ export class AppServerCodexAdapter implements CodexAdapter {
       title: input.title ?? stringValue(thread.name) ?? stringValue(thread.preview) ?? `codex:${threadId}`,
       createdAt: isoFromSeconds(numberValue(thread.createdAt)) ?? new Date().toISOString(),
     };
-    const model = modelInfoFromResponse(response, thread);
+    const baseModel = modelInfoFromResponse(response, thread);
+    const model = modelInfoWithPolicy(baseModel, modelPolicy);
     this.sessions.set(session.id, {
       session,
       routeKey: input.routeKey,
       status: { type: "idle", ...(model ? { model } : {}) },
       updatedAt: new Date().toISOString(),
+      ...(baseModel ? { baseModel } : {}),
     });
     this.sessionRunPolicies.set(session.id, cloneRunPolicy(this.defaultRunPolicy));
+    this.sessionModelPolicies.set(session.id, modelPolicy);
     this.threadToSession.set(threadId, session.id);
     return session;
   }
@@ -168,8 +184,11 @@ export class AppServerCodexAdapter implements CodexAdapter {
     const stored = this.sessions.get(sessionId);
     if (stored) return stored.session;
     const discovered = findCodexSessionById(sessionId, { codexHome: this.codexHome });
+    const modelPolicy = cloneModelPolicy(this.sessionModelPolicies.get(sessionId) ?? this.defaultModelPolicy);
     const response = await this.request<Record<string, unknown>>("thread/resume", {
       threadId: sessionId,
+      model: modelPolicy.model,
+      serviceTier: modelPolicy.serviceTier,
       cwd: discovered?.cwd ?? undefined,
       approvalPolicy: approvalPolicyForRunPolicy(this.defaultRunPolicy),
       approvalsReviewer: approvalsReviewerForRunPolicy(this.defaultRunPolicy),
@@ -183,14 +202,19 @@ export class AppServerCodexAdapter implements CodexAdapter {
       title: stringValue(thread.name) ?? (discovered ? displayCodexSessionTitle(discovered) : undefined) ?? `codex:${sessionId}`,
       createdAt: isoFromSeconds(numberValue(thread.createdAt)) ?? discovered?.updatedAt ?? new Date().toISOString(),
     };
-    const model = modelInfoFromResponse(response, thread);
+    const baseModel = modelInfoFromResponse(response, thread);
+    const model = modelInfoWithPolicy(baseModel, modelPolicy);
     this.sessions.set(session.id, {
       session,
       status: { type: "idle", ...(model ? { model } : {}) },
       updatedAt: new Date().toISOString(),
+      ...(baseModel ? { baseModel } : {}),
     });
     if (!this.sessionRunPolicies.has(session.id)) {
       this.sessionRunPolicies.set(session.id, cloneRunPolicy(this.defaultRunPolicy));
+    }
+    if (!this.sessionModelPolicies.has(session.id)) {
+      this.sessionModelPolicies.set(session.id, modelPolicy);
     }
     this.threadToSession.set(sessionId, session.id);
     return session;
@@ -201,6 +225,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
     if (!stored) throw new Error(`app-server session not found locally: ${sessionId}`);
     await this.ensureStarted();
     const runPolicy = this.runPolicyForSession(sessionId);
+    const modelPolicy = this.modelPolicyForSession(sessionId);
     const turnResponse = await this.request<Record<string, unknown>>("turn/start", {
       threadId: sessionId,
       input: [{ type: "text", text: prompt, text_elements: [] }],
@@ -208,6 +233,9 @@ export class AppServerCodexAdapter implements CodexAdapter {
       approvalPolicy: approvalPolicyForRunPolicy(runPolicy),
       approvalsReviewer: approvalsReviewerForRunPolicy(runPolicy),
       sandboxPolicy: sandboxPolicyForRunPolicy(runPolicy, stored.session.cwd),
+      model: modelPolicy.model,
+      serviceTier: modelPolicy.serviceTier,
+      effort: modelPolicy.reasoningEffort,
     });
     const turn = objectValue(turnResponse.turn);
     const turnId = stringValue(turn.id) ?? `app-server-turn-${Date.now()}`;
@@ -229,6 +257,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
     }
     this.earlyTurnEvents.delete(turnId);
     stored.status = withContext(stored, { type: "running", turnId, task: truncatePrompt(prompt) });
+    stored.status = withModelPolicy(stored.status, modelPolicy);
     stored.currentTurnId = turnId;
     stored.updatedAt = new Date().toISOString();
     yield { type: "turn.started", sessionId, turnId };
@@ -319,8 +348,47 @@ export class AppServerCodexAdapter implements CodexAdapter {
     };
   }
 
+  async listModels(options: CodexModelListOptions = {}): Promise<CodexModelOption[]> {
+    await this.ensureStarted();
+    const models: CodexModelOption[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const response = await this.request<Record<string, unknown>>("model/list", {
+        cursor: cursor ?? null,
+        limit: 100,
+        includeHidden: options.includeHidden ?? false,
+      });
+      models.push(...modelsFromListResponse(response));
+      cursor = stringValue(response.nextCursor ?? response.next_cursor) ?? null;
+    } while (cursor);
+    return models;
+  }
+
+  getModelPolicy(sessionId?: string): CodexModelPolicy {
+    return cloneModelPolicy(this.modelPolicyForSession(sessionId));
+  }
+
+  setModelPolicy(policy: CodexModelPolicy, sessionId?: string): void {
+    const next = cloneModelPolicy(policy);
+    if (sessionId) {
+      this.sessionModelPolicies.set(sessionId, next);
+      const stored = this.sessions.get(sessionId);
+      if (stored) {
+        const model = modelInfoWithPolicy(stored.baseModel, next);
+        stored.status = model ? { ...stored.status, model } : withoutModelInfo(stored.status);
+        stored.updatedAt = new Date().toISOString();
+      }
+      return;
+    }
+    this.defaultModelPolicy = next;
+  }
+
   private runPolicyForSession(sessionId?: string): CodexRunPolicy {
     return (sessionId ? this.sessionRunPolicies.get(sessionId) : undefined) ?? this.defaultRunPolicy;
+  }
+
+  private modelPolicyForSession(sessionId?: string): CodexModelPolicy {
+    return (sessionId ? this.sessionModelPolicies.get(sessionId) : undefined) ?? this.defaultModelPolicy;
   }
 
   private ensureStarted(): Promise<void> {
@@ -837,6 +905,10 @@ function cloneRunPolicy(policy: CodexRunPolicy): CodexRunPolicy {
   return { ...policy };
 }
 
+function cloneModelPolicy(policy: CodexModelPolicy): CodexModelPolicy {
+  return { ...policy };
+}
+
 function approvalsReviewerForRunPolicy(policy: CodexRunPolicy): "user" | null {
   return policy.permissionMode === "full" ? null : "user";
 }
@@ -886,6 +958,32 @@ function withContext(record: AppServerSessionRecord, status: CodexSessionBaseSta
   };
 }
 
+function withModelPolicy(status: CodexSessionStatus, policy: CodexModelPolicy): CodexSessionStatus {
+  const model = modelInfoWithPolicy(status.model, policy);
+  return {
+    ...status,
+    ...(model ? { model } : {}),
+  };
+}
+
+function withoutModelInfo(status: CodexSessionStatus): CodexSessionStatus {
+  const { model: _model, ...rest } = status;
+  return rest;
+}
+
+function modelInfoWithPolicy(
+  model: CodexSessionModelInfo | undefined,
+  policy: CodexModelPolicy,
+): CodexSessionModelInfo | undefined {
+  if (!model && !policy.model && policy.serviceTier === undefined && !policy.reasoningEffort) return undefined;
+  return {
+    ...(model ?? {}),
+    ...(policy.model ? { model: policy.model } : {}),
+    ...(policy.serviceTier !== undefined ? { serviceTier: policy.serviceTier } : {}),
+    ...(policy.reasoningEffort ? { reasoningEffort: policy.reasoningEffort } : {}),
+  };
+}
+
 function modelInfoFromResponse(
   response: Record<string, unknown>,
   thread: Record<string, unknown>,
@@ -903,6 +1001,71 @@ function modelInfoFromResponse(
     ...(serviceTier ? { serviceTier } : {}),
     ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
   };
+}
+
+function modelsFromListResponse(response: Record<string, unknown>): CodexModelOption[] {
+  return arrayValue(response.data)
+    .map(modelOptionFromValue)
+    .filter((model): model is CodexModelOption => Boolean(model));
+}
+
+function modelOptionFromValue(value: unknown): CodexModelOption | undefined {
+  const object = objectValue(value);
+  const id = stringValue(object.id);
+  const model = stringValue(object.model);
+  if (!id || !model) return undefined;
+  const supportedReasoningEfforts = arrayValue(object.supportedReasoningEfforts ?? object.supported_reasoning_efforts)
+    .map(reasoningEffortOptionFromValue)
+    .filter((option): option is CodexReasoningEffortOption => Boolean(option));
+  const defaultReasoningEffort = reasoningEffortValue(object.defaultReasoningEffort ?? object.default_reasoning_effort);
+  if (defaultReasoningEffort && !supportedReasoningEfforts.some((option) => option.reasoningEffort === defaultReasoningEffort)) {
+    supportedReasoningEfforts.push({ reasoningEffort: defaultReasoningEffort });
+  }
+  const serviceTiers = arrayValue(object.serviceTiers ?? object.service_tiers)
+    .map(modelServiceTierFromValue)
+    .filter((tier): tier is CodexModelServiceTier => Boolean(tier));
+  return {
+    id,
+    model,
+    displayName: stringValue(object.displayName ?? object.display_name) ?? model,
+    ...(stringValue(object.description) ? { description: stringValue(object.description) } : {}),
+    hidden: object.hidden === true,
+    supportedReasoningEfforts,
+    ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    ...(serviceTiers.length > 0 ? { serviceTiers } : {}),
+    ...(typeof object.isDefault === "boolean" ? { isDefault: object.isDefault } : {}),
+  };
+}
+
+function reasoningEffortOptionFromValue(value: unknown): CodexReasoningEffortOption | undefined {
+  if (typeof value === "string") {
+    const effort = reasoningEffortValue(value);
+    return effort ? { reasoningEffort: effort } : undefined;
+  }
+  const object = objectValue(value);
+  const reasoningEffort = reasoningEffortValue(object.reasoningEffort ?? object.reasoning_effort);
+  if (!reasoningEffort) return undefined;
+  return {
+    reasoningEffort,
+    ...(stringValue(object.description) ? { description: stringValue(object.description) } : {}),
+  };
+}
+
+function modelServiceTierFromValue(value: unknown): CodexModelServiceTier | undefined {
+  const object = objectValue(value);
+  const id = stringValue(object.id);
+  if (!id) return undefined;
+  return {
+    id,
+    ...(stringValue(object.name) ? { name: stringValue(object.name) } : {}),
+    ...(stringValue(object.description) ? { description: stringValue(object.description) } : {}),
+  };
+}
+
+function reasoningEffortValue(value: unknown): CodexReasoningEffort | undefined {
+  return typeof value === "string" && (CODEX_REASONING_EFFORTS as readonly string[]).includes(value)
+    ? value as CodexReasoningEffort
+    : undefined;
 }
 
 function parseTokenUsage(value: Record<string, unknown>): CodexSessionContextUsage | undefined {

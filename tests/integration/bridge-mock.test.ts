@@ -335,6 +335,64 @@ test("Bridge status includes session token context without channel identity deta
   assert.doesNotMatch(statusMessage, /Mock User \(alice\)/);
 });
 
+test("Bridge model command lists actual models and is shown in help", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/help");
+  await channel.emitText("/model");
+  await channel.emitText("/model all");
+  await bridge.stop();
+
+  const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
+  assert.ok(help.includes("```text\n/model [模型|编号] [effort]\n```"));
+  const visibleList = channel.sentMessages.find((message) => message.text.includes("**模型设置**") && !message.text.includes("gpt-hidden"))?.text ?? "";
+  assert.ok(visibleList.includes("`model/list`"));
+  assert.ok(visibleList.includes("`gpt-test`"));
+  assert.ok(visibleList.includes("`gpt-next`"));
+  assert.equal(visibleList.includes("`gpt-hidden`"), false);
+  const allList = channel.sentMessages.at(-1)?.text ?? "";
+  assert.ok(allList.includes("`model/list includeHidden=true`"));
+  assert.ok(allList.includes("`gpt-hidden`"));
+});
+
+test("Bridge model command switches model and effort for the current session", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/new");
+  await channel.emitText("/model gpt-next xhigh");
+  await channel.emitText("/status");
+  await channel.emitText("/model 2 high");
+  await bridge.stop();
+
+  assert.deepEqual(codex.getModelPolicy("mock-codex-1"), { model: "gpt-next", reasoningEffort: "high" });
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已设置 Codex 模型")));
+  const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
+  assert.ok(status.includes("Model override: model=`gpt-next` effort=`xhigh`"));
+});
+
+test("Bridge model command rejects unknown models and invalid or unsupported efforts", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/model gpt-missing xhigh");
+  await channel.emitText("/model gpt-next impossible");
+  await channel.emitText("/model gpt-test xhigh");
+  await bridge.stop();
+
+  assert.deepEqual(codex.getModelPolicy(), {});
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("未找到模型: `gpt-missing`")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("未知思考程度: `impossible`")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("模型 `gpt-test` 不支持思考程度 `xhigh`")));
+});
+
 test("Bridge does not crash when channel text delivery fails", async () => {
   const channel = new FailingSendChannelAdapter();
   const codex = new MockCodexAdapter();

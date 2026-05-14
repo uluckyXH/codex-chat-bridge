@@ -3,6 +3,10 @@ import type { CodexRunPolicy, CodexRunPolicyStatus } from "./codex-cli.js";
 
 export type { CodexRunPolicy, CodexRunPolicyStatus } from "./codex-cli.js";
 
+export const CODEX_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+
+export type CodexReasoningEffort = typeof CODEX_REASONING_EFFORTS[number];
+
 export interface CodexSession {
   id: string;
   cwd: string;
@@ -29,6 +33,39 @@ export interface CodexSessionModelInfo {
   provider?: string;
   serviceTier?: string | null;
   reasoningEffort?: string | null;
+}
+
+export interface CodexReasoningEffortOption {
+  reasoningEffort: CodexReasoningEffort;
+  description?: string;
+}
+
+export interface CodexModelServiceTier {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
+export interface CodexModelOption {
+  id: string;
+  model: string;
+  displayName: string;
+  description?: string;
+  hidden: boolean;
+  supportedReasoningEfforts: CodexReasoningEffortOption[];
+  defaultReasoningEffort?: CodexReasoningEffort;
+  serviceTiers?: CodexModelServiceTier[];
+  isDefault?: boolean;
+}
+
+export interface CodexModelListOptions {
+  includeHidden?: boolean;
+}
+
+export interface CodexModelPolicy {
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
+  serviceTier?: string | null;
 }
 
 export type CodexSessionBaseStatus =
@@ -90,4 +127,7 @@ export interface CodexAdapter {
   getRunPolicy?(sessionId?: string): CodexRunPolicy;
   setRunPolicy?(policy: CodexRunPolicy, sessionId?: string): void;
   getRunPolicyStatus?(sessionId?: string): CodexRunPolicyStatus;
+  listModels?(options?: CodexModelListOptions): Promise<CodexModelOption[]>;
+  getModelPolicy?(sessionId?: string): CodexModelPolicy;
+  setModelPolicy?(policy: CodexModelPolicy, sessionId?: string): void;
 }

@@ -51,6 +51,8 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/stop`、审批命令仍会立即处理。每条任务开始时只发送简短的“正在处理”提示，不重复刷 Session ID；需要查看会话、模型、上下文 token 用量和权限细节时使用 `/status`。默认 `brief` 进度模式只投递计划、自言自语、搜索和文件变更摘要，不投递命令/工具细节；需要完整调试信息时可发送 `/progress detailed` 或启动时传 `--progress detailed`。
 
+微信侧 `/model` 会从 Codex app-server 的 `model/list` 获取当前真实可用模型，不维护硬编码目录。可以发送 `/model` 查看列表，发送 `/model gpt-5.5 xhigh` 或 `/model 2 high` 切换后续任务的模型和思考程度；模型名或思考程度不在实际列表内会直接报错。
+
 微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。默认发送间隔为 1200ms；遇到 `sendmessage` 限流或临时失败时会做退避重试，仍失败才进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。审批消息属于关键消息：Bridge 会在创建 pending approval 后持续重试发送审批提示，直到至少送达一次，或审批已被 `/OK`、`/NO`、`/stop` 处理。Codex 运行期间，微信通道会通过 `getconfig` 获取 `typing_ticket`，再周期调用 `sendtyping` 维持“对方正在输入中”状态，结束或 `/stop` 后会停止 typing。
 
 普通消息和进度输出不会自动发送文件或图片；即使 Codex 回复里出现本地路径、Markdown 图片或 `file://`，也只作为普通文本处理。需要让 Codex 本轮生成并发送文件时，发送 `/sendfile <任务内容>`。中间件会在转给 Codex 的 prompt 里追加内部协议说明，只解析本轮最终回复末尾的 `BRIDGE_SEND_FILE: /absolute/path/to/file` 行；每轮最多发送 3 个文件，并在发给用户的最终文本里隐藏这些内部协议行。文件发送失败时只发送一条聚合结果，不再逐个文件发送 fallback 文本。
@@ -71,6 +73,7 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 - `/resume <session>` / `/use <session>`：恢复并绑定指定 Codex 会话。
 - `/progress [brief|detailed|silent]`：查看或设置当前微信上下文的进度投递模式。
 - `/sendfile <任务内容>`：让 Codex 本轮按内部协议声明最终要发送的文件；普通消息不会自动发文件。
+- `/model [模型|编号] [effort]`：查看 app-server 实际可用模型，或切换后续任务使用的模型和思考程度。
 - `/permission [approval|full confirm]`：查看或切换当前绑定 Codex session 的权限模式；没有绑定 session 时修改后续新会话默认权限。
 - `/OK`：批准当前 Codex 审批。
 - `/NO [理由]`：拒绝当前 Codex 审批，并记录拒绝理由。

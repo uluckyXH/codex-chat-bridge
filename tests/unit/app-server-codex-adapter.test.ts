@@ -51,6 +51,72 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "initialized") return;
+  if (message.method === "model/list") {
+    const models = [
+      {
+        id: "fake",
+        model: "fake",
+        upgrade: null,
+        upgradeInfo: null,
+        availabilityNux: null,
+        displayName: "Fake",
+        description: "Fake default model",
+        hidden: false,
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "Low" },
+          { reasoningEffort: "medium", description: "Medium" },
+          { reasoningEffort: "high", description: "High" },
+        ],
+        defaultReasoningEffort: "medium",
+        inputModalities: ["text"],
+        supportsPersonality: false,
+        additionalSpeedTiers: [],
+        serviceTiers: [{ id: "default", name: "Default", description: "Default tier" }],
+        isDefault: true,
+      },
+      {
+        id: "fake-next",
+        model: "fake-next",
+        upgrade: null,
+        upgradeInfo: null,
+        availabilityNux: null,
+        displayName: "Fake Next",
+        description: "Fake next model",
+        hidden: false,
+        supportedReasoningEfforts: [
+          { reasoningEffort: "medium", description: "Medium" },
+          { reasoningEffort: "high", description: "High" },
+          { reasoningEffort: "xhigh", description: "Extra high" },
+        ],
+        defaultReasoningEffort: "high",
+        inputModalities: ["text"],
+        supportsPersonality: false,
+        additionalSpeedTiers: [],
+        serviceTiers: [{ id: "default", name: "Default", description: "Default tier" }],
+        isDefault: false,
+      },
+      {
+        id: "fake-hidden",
+        model: "fake-hidden",
+        upgrade: null,
+        upgradeInfo: null,
+        availabilityNux: null,
+        displayName: "Fake Hidden",
+        description: "Hidden fake model",
+        hidden: true,
+        supportedReasoningEfforts: [{ reasoningEffort: "high", description: "High" }],
+        defaultReasoningEffort: "high",
+        inputModalities: ["text"],
+        supportsPersonality: false,
+        additionalSpeedTiers: [],
+        serviceTiers: [],
+        isDefault: false,
+      },
+    ];
+    const includeHidden = message.params?.includeHidden === true;
+    send({ id: message.id, result: { data: includeHidden ? models : models.filter((model) => !model.hidden), nextCursor: null } });
+    return;
+  }
   if (message.method === "thread/start") {
     if (message.params.sessionStartSource !== "startup") {
       send({ id: message.id, error: { code: -32602, message: "invalid sessionStartSource" } });
@@ -94,6 +160,11 @@ rl.on("line", (line) => {
     if (prompt.includes("sandbox policy")) {
       const sandboxPolicy = message.params.sandboxPolicy || {};
       send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "sandbox network " + sandboxPolicy.networkAccess, phase: null, memoryCitation: null } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
+      return;
+    }
+    if (prompt.includes("model params")) {
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "model " + message.params.model + " effort " + message.params.effort, phase: null, memoryCitation: null } } });
       send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
       return;
     }
@@ -404,4 +475,41 @@ test("AppServerCodexAdapter scopes run policy per session", async () => {
   assert.equal(adapter.getRunPolicy(second.id).permissionMode, "approval");
   assert.equal(adapter.getRunPolicyStatus(second.id).effectiveApprovalPolicy, "on-request");
   assert.equal(adapter.getRunPolicy().permissionMode, "approval");
+});
+
+test("AppServerCodexAdapter lists models from app-server", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+
+  const visible = await adapter.listModels();
+  const all = await adapter.listModels({ includeHidden: true });
+  await adapter.stop();
+
+  assert.deepEqual(visible.map((model) => model.model), ["fake", "fake-next"]);
+  assert.equal(visible[0].defaultReasoningEffort, "medium");
+  assert.deepEqual(visible[1].supportedReasoningEfforts.map((option) => option.reasoningEffort), ["medium", "high", "xhigh"]);
+  assert.ok(all.some((model) => model.model === "fake-hidden"));
+});
+
+test("AppServerCodexAdapter sends model policy on turn start", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+  adapter.setModelPolicy({ model: "fake-next", reasoningEffort: "xhigh" }, session.id);
+  const events = [];
+
+  for await (const event of adapter.run(session.id, "model params please")) {
+    events.push(event);
+  }
+  const status = await adapter.getStatus(session.id);
+  await adapter.stop();
+
+  assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "model fake-next effort xhigh"));
+  assert.equal(status.model?.model, "fake-next");
+  assert.equal(status.model?.reasoningEffort, "xhigh");
+  assert.deepEqual(adapter.getModelPolicy(session.id), { model: "fake-next", reasoningEffort: "xhigh" });
 });
