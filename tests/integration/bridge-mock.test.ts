@@ -39,6 +39,18 @@ class ProgressCodexAdapter extends MockCodexAdapter {
   }
 }
 
+class ManyProgressCodexAdapter extends MockCodexAdapter {
+  override async *run(sessionId: string, _prompt: string): AsyncIterable<CodexEvent> {
+    const turnId = `many-progress-turn-${Date.now()}`;
+    yield { type: "turn.started", sessionId, turnId };
+    yield { type: "assistant.progress", sessionId, turnId, kind: "reasoning", text: "第一段进度。" };
+    yield { type: "assistant.progress", sessionId, turnId, kind: "reasoning", text: "第二段进度。" };
+    yield { type: "assistant.progress", sessionId, turnId, kind: "reasoning", text: "第三段进度。" };
+    yield { type: "assistant.completed", sessionId, turnId, text: "完成" };
+    yield { type: "turn.completed", sessionId, turnId };
+  }
+}
+
 class AdapterApprovalIdCodexAdapter extends MockCodexAdapter {
   override async *run(sessionId: string, _prompt: string): AsyncIterable<CodexEvent> {
     const turnId = "adapter-approval-turn-1";
@@ -94,12 +106,25 @@ class FailingSendChannelAdapter extends MockChannelAdapter {
   }
 }
 
+class ProgressFailingChannelAdapter extends MockChannelAdapter {
+  progressAttempts = 0;
+
+  override async sendText(target: ChannelTarget, text: string): Promise<SendResult> {
+    if (text.startsWith("Codex 进度:")) {
+      this.progressAttempts += 1;
+      throw new Error("sendmessage failed: ret=-2 errcode=0");
+    }
+    return super.sendText(target, text);
+  }
+}
+
 class CancellableCodexAdapter implements CodexAdapter {
   private sequence = 0;
   private readonly sessions = new Map<string, CodexSession>();
   private status: CodexSessionStatus = { type: "idle" };
   private release?: () => void;
   cancelled = false;
+  readonly prompts: string[] = [];
 
   async startSession(input: StartSessionInput): Promise<CodexSession> {
     this.sequence += 1;
@@ -120,6 +145,7 @@ class CancellableCodexAdapter implements CodexAdapter {
   }
 
   async *run(sessionId: string, prompt: string): AsyncIterable<CodexEvent> {
+    this.prompts.push(prompt);
     const turnId = "cancel-turn-1";
     this.status = { type: "running", turnId, task: prompt };
     yield { type: "turn.started", sessionId, turnId };
@@ -363,6 +389,20 @@ test("Bridge progress command enables detailed progress for the current route", 
   assert.ok(channel.sentMessages.some((message) => message.text.includes("正在执行命令: npm test")));
 });
 
+test("Bridge suppresses progress sends briefly after a channel progress failure", async () => {
+  const channel = new ProgressFailingChannelAdapter();
+  const codex = new ManyProgressCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("跑一个多进度任务");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.equal(channel.progressAttempts, 1);
+  assert.ok(channel.sentMessages.some((message) => message.text === "完成"));
+});
+
 test("Bridge permission command shows and changes Codex run policy", async () => {
   const channel = new MockChannelAdapter();
   const codex = new MockCodexAdapter();
@@ -446,6 +486,23 @@ test("Bridge status reports running work and /stop cancels the current task", as
   assert.equal(codex.cancelled, true);
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已请求停止当前 Codex 任务")));
   assert.deepEqual(channel.sentTyping.map((event) => event.typing), [true, false, false]);
+});
+
+test("Bridge stop clears queued prompts for the current route", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new CancellableCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("执行一个长任务");
+  await waitFor(async () => (await codex.getStatus()).type === "running");
+  await channel.emitText("这条应该被清空");
+  await channel.emitText("/stop");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.deepEqual(codex.prompts, ["执行一个长任务"]);
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已清空 1 条排队消息")));
 });
 
 test("Bridge queues normal prompts for the same route while keeping commands responsive", async () => {

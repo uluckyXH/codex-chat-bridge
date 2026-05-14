@@ -31,6 +31,8 @@ interface QueuedPrompt {
 
 export type ProgressDeliveryMode = "brief" | "detailed" | "silent";
 
+const PROGRESS_SEND_FAILURE_COOLDOWN_MS = 60_000;
+
 export class Bridge {
   private readonly channel: ChannelAdapter;
   private readonly codex: CodexAdapter;
@@ -43,6 +45,7 @@ export class Bridge {
   private readonly routeProgressModes = new Map<string, ProgressDeliveryMode>();
   private readonly routeQueues = new Map<string, QueuedPrompt[]>();
   private readonly routeWorkers = new Map<string, Promise<void>>();
+  private readonly progressSendSuppressedUntil = new Map<string, number>();
   private initialSessionId?: string;
 
   constructor(options: BridgeOptions) {
@@ -246,7 +249,7 @@ export class Bridge {
           });
         } else if (event.type === "assistant.progress") {
           if (this.shouldDeliverProgress(message.routeKey, event.kind)) {
-            await this.sendProgressText(target, `Codex 进度:\n${truncateForChannel(event.text)}`);
+            await this.sendProgressText(message.routeKey, target, `Codex 进度:\n${truncateForChannel(event.text)}`);
           }
           await this.sendExtractedMedia(target, event.text, session.cwd, sentMediaKeys);
         } else if (event.type === "assistant.delta") {
@@ -351,11 +354,17 @@ export class Bridge {
       await this.sendText(target, "当前 Codex Adapter 不支持取消。");
       return;
     }
+    const queued = this.routeQueues.get(message.routeKey);
+    const clearedQueued = queued?.length ?? 0;
+    if (queued) queued.length = 0;
     await this.codex.cancel(binding.sessionId);
     this.approvals.cancelRoute(message.routeKey, "任务已停止");
     this.state.setSessionStatus(binding.sessionId, { type: "idle" });
     await this.sendTyping(target, false);
-    await this.sendText(target, "已请求停止当前 Codex 任务。");
+    await this.sendText(target, [
+      "已请求停止当前 Codex 任务。",
+      clearedQueued > 0 ? `已清空 ${clearedQueued} 条排队消息。` : undefined,
+    ].filter(Boolean).join("\n"));
   }
 
   private async handleProgressModeCommand(
@@ -444,13 +453,18 @@ export class Bridge {
     this.transcript?.outbound(target, text);
   }
 
-  private async sendProgressText(target: ChannelTarget, text: string): Promise<void> {
+  private async sendProgressText(routeKey: string, target: ChannelTarget, text: string): Promise<void> {
+    const suppressedUntil = this.progressSendSuppressedUntil.get(routeKey) ?? 0;
+    if (Date.now() < suppressedUntil) return;
     try {
       await this.deliverText(target, text);
+      this.progressSendSuppressedUntil.delete(routeKey);
     } catch (error) {
+      this.progressSendSuppressedUntil.set(routeKey, Date.now() + PROGRESS_SEND_FAILURE_COOLDOWN_MS);
       this.logger.warn("progress message send failed", {
         channel: this.channel.id,
         error: error instanceof Error ? error.message : String(error),
+        cooldownMs: PROGRESS_SEND_FAILURE_COOLDOWN_MS,
       });
     }
   }
