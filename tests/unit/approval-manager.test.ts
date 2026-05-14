@@ -75,3 +75,28 @@ test("ApprovalManager rejects wrong route decisions", () => {
 
   assert.throws(() => manager.decide(pending.approvalKey, "route-b", "deny"), /不属于当前会话/);
 });
+
+test("ApprovalManager cancels pending approvals for a route", () => {
+  const manager = new ApprovalManager({ ttlMs: 60_000 });
+  const first = manager.create("route-a", "user", {
+    kind: "command",
+    sessionId: "s1",
+    turnId: "t1",
+    itemId: "i1",
+  });
+  manager.create("route-b", "user", {
+    kind: "command",
+    sessionId: "s2",
+    turnId: "t2",
+    itemId: "i2",
+  });
+
+  const cancelled = manager.cancelRoute("route-a", "任务已停止");
+
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0].approvalKey, first.approvalKey);
+  assert.equal(cancelled[0].decision, "cancel");
+  assert.equal(cancelled[0].decisionReason, "任务已停止");
+  assert.equal(manager.list("route-a").length, 0);
+  assert.equal(manager.list("route-b").length, 1);
+});

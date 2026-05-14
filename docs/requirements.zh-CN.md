@@ -30,7 +30,7 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 
 ## 2. 当前阶段范围
 
-当前已进入第一阶段实现：先打通 Codex 与中间件通信，再进入真实微信桥接。第一阶段允许使用 mock channel 和 terminal channel 模拟微信输入输出，避免被微信登录阻塞。
+当前已进入完整闭环初版：Codex app-server、Bridge、通用渠道协议和 WeixinAdapter 已打通基础链路。mock channel 和 terminal channel 继续用于自动化测试，避免真实微信登录阻塞开发验证。
 
 当前已完成或已建立的基础内容：
 
@@ -41,14 +41,14 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 - `TerminalChannelAdapter`，用于本地终端模拟微信消息。
 - `Bridge Core`、命令处理、审批管理、内存状态存储、日志。
 - `MockCodexAdapter`。
-- `ExecCodexAdapter` 初版，用于后续通过 `codex exec --json` 做真实 Codex CLI 验证。
-- `ExecCodexAdapter` 已完成真实 Codex CLI 中间件调用验证。
+- `AppServerCodexAdapter` 初版，默认通过 `codex app-server --listen stdio://` 驱动真实 Codex，并把审批请求回调给微信。
+- `ExecCodexAdapter` 已完成真实 Codex CLI 中间件调用验证，并保留为非交互回退模式。
 - 真实 Codex 模式启动时必须检测 Codex 是否可用，并允许选择历史会话或创建新会话。
-- 真实 Codex 模式启动时必须先选择新会话或历史会话，再选择权限模式：安全沙箱模式或完全权限；完全权限必须明确提示危险并要求确认。当前 `codex exec` 接入不支持交互审批，真实微信审批需要后续 app-server adapter。
+- 真实 Codex 模式启动时必须先选择新会话或历史会话，再选择权限模式：安全沙箱模式或完全权限；完全权限必须明确提示危险并要求确认。默认 app-server 接入下，安全沙箱模式必须支持把 Codex 审批请求推送到微信。
 - 真实 Codex 模式启动时，如果选择创建新会话，必须展示默认工作目录；用户可以输入新工作目录，目录不存在时由中间件创建。
 - 真实 Codex 模式启动时，如果选择历史会话，不再询问新工作目录，必须尽量恢复该 Codex 会话历史记录中的原工作目录。
 - 历史会话列表和微信 `/sessions all` 必须优先展示 Codex 已保存的标题或首条用户消息，方便用户辨认会话 ID。
-- `WeixinAdapter` 第一版：已实现二维码登录 API 入口、登录确认轮询、账号 token 本地存储、文本 `sendmessage` 请求、微信入站消息到通用 `ChannelMessage` 的转换。
+- `WeixinAdapter` 第一版：已实现二维码登录 API 入口、登录确认轮询、账号 token 本地存储、文本 `sendmessage` 请求、微信入站消息到通用 `ChannelMessage` 的转换、媒体上传发送、typing 和限流重试。
 - `WeixinAdapter` 真实扫码登录和真实微信收发仍需用户后续协助测试。
 - 本地单元测试、集成测试和中文测试报告。
 
@@ -142,10 +142,11 @@ Git 管理要求：
 - 能获取或整理 Codex 当前状态，用于 `/status` 命令。
 - 默认不应把不同用户或不同群的上下文混到同一个 Codex 会话中。
 
-待确认：
+当前实现约束：
 
-- Codex 第一阶段应通过 CLI JSONL、SDK，还是 app-server 接入；完整审批目标倾向 app-server。
-- Codex 会话是否能被外部可靠地创建、恢复、中断和查询状态。
+- 默认真实接入走 `codex app-server`，用于创建、恢复、中断 Codex thread/turn，并支持微信交互审批。
+- `codex exec --json` 只作为非交互回退模式，不承担完整审批体验。
+- Codex 会话的外部创建、恢复和中断已具备初版能力；后续仍需补充 app-server 重连、事件背压和更多协议版本兼容。
 
 ### 3.3 `/new` 命令
 

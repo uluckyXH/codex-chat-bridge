@@ -52,6 +52,7 @@ export interface CodexSessionSummary {
 }
 
 export interface CodexAdapter {
+  stop?(): Promise<void>;
   startSession(input: StartSessionInput): Promise<CodexSession>;
   resumeSession(sessionId: string): Promise<CodexSession>;
   run(sessionId: string, prompt: string): AsyncIterable<CodexEvent>;

@@ -11,7 +11,8 @@
 - 已建立通用 `ChannelAdapter` 协议，后续其他渠道可按同一协议接入。
 - 已实现 Mock、Terminal、Weixin 三类通道适配器。
 - 已实现 Bridge Core、命令路由、审批管理、内存状态和基础日志。
-- 已实现 `codex exec --json` 适配器，并通过终端通道验证真实 Codex CLI 通信。
+- 已实现默认 `codex app-server` 适配器：通过 stdio JSON-RPC 创建/恢复 thread，启动 turn，并把 command/file/permissions 审批请求转成微信 `/OK`、`/NO [理由]`。
+- 已保留 `codex exec --json` 适配器作为回退模式，并通过终端通道验证真实 Codex CLI 通信。
 - 已实现微信二维码登录入口、账号凭证本地保存、文本发送和 `getupdates` 轮询基础能力。
 - 已实现 Codex 输出图片转发：会从阶段性输出和最终回复里识别本地图片路径、`file://`、Markdown 图片和远程图片 URL；微信通道会上传图片后发送，其他不支持媒体的通道会退回文本路径说明。
 - `weixin codex` 启动时会检查 Codex 可用性和微信登录态；已登录会跳过二维码，未登录会进入扫码登录。
@@ -39,15 +40,16 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 - `--session new|last|<id>`：创建新会话、恢复最近会话或绑定指定 Codex 会话。
 - `--cwd <dir>` / `--workdir <dir>`：只用于新会话；目录不存在会自动创建。
-- `--permission approval|full`：选择安全沙箱模式或完全权限。当前 `codex exec` 接入下，`approval` 会使用 `workspace-write` sandbox，但不会产生交互审批；真正的微信审批需要后续 app-server adapter。
+- `--codex-adapter app-server|exec` / `--adapter app-server|exec`：选择 Codex 接入方式，默认 `app-server`。`app-server` 支持微信交互审批；`exec` 是非交互回退，不会把审批请求推送到微信。
+- `--permission approval|full`：选择安全沙箱模式或完全权限。默认 `approval` 使用 `workspace-write` sandbox，并在 app-server 模式下把审批请求推送到微信。
 - `--yes-dangerously-full`：非交互确认完全权限。完全权限会跳过审批和沙箱，风险很高。
 - `--progress brief|detailed|silent`：设置默认进度投递模式。默认 `brief` 不发送命令/工具细节；`detailed` 保留完整命令/工具进度；`silent` 只发开始、审批、最终回复和媒体。
 
 交互启动时会先选择新会话或历史会话，再选择本次启动后的 Codex 权限模式，避免历史会话的上下文让权限选择不直观。如果选择新会话，会展示默认工作目录。用户输入新目录时，目录不存在会自动创建；如果选择历史会话，中间件会使用该 Codex 会话历史记录里的工作目录。
 
-当前 `codex exec --json` 模式会复用 Codex 历史会话，但不会把微信侧交互实时同步到另一个已经打开的 Codex CLI 或 Codex App 窗口。要实现多端实时同屏，需要后续切换到更完整的 Codex app-server/事件订阅方案，或让中间件成为唯一会话入口并提供自己的观察端。
+默认 `codex app-server` 模式会复用 Codex 历史 thread，并由中间件作为当前微信会话的 Codex 客户端。它支持交互审批和 turn 中断，但不会把微信侧交互实时同步到另一个已经打开的 Codex CLI 或 Codex App 窗口；如需多端实时同屏，需要额外的观察端或事件订阅设计。`codex exec --json` 仍可通过 `--codex-adapter exec` 启用，用于回退和调试。
 
-同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/stop`、审批命令仍会立即处理。每条任务开始时只发送简短的“正在处理”提示，不重复刷 Session ID；需要查看会话和权限细节时使用 `/status`。当前 exec 模式的“中途输出”来自 `codex exec --json` 可见事件。默认 `brief` 进度模式只投递计划、自言自语、搜索和文件变更摘要，不投递命令/工具细节；需要完整调试信息时可发送 `/progress detailed` 或启动时传 `--progress detailed`。更细的同 turn 插入和 steering 需要后续 app-server adapter。
+同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/stop`、审批命令仍会立即处理。每条任务开始时只发送简短的“正在处理”提示，不重复刷 Session ID；需要查看会话和权限细节时使用 `/status`。默认 `brief` 进度模式只投递计划、自言自语、搜索和文件变更摘要，不投递命令/工具细节；需要完整调试信息时可发送 `/progress detailed` 或启动时传 `--progress detailed`。
 
 微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。默认发送间隔为 1200ms；遇到 `sendmessage` 限流或临时失败时会做退避重试，仍失败才进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。Codex 运行期间，微信通道会通过 `getconfig` 获取 `typing_ticket`，再周期调用 `sendtyping` 维持“对方正在输入中”状态，结束或 `/stop` 后会停止 typing。
 

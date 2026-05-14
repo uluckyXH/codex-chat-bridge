@@ -77,7 +77,7 @@ npm run cli:terminal:mock
 npm run cli:terminal:codex
 ```
 
-其中 `cli:terminal:mock` 是本地终端通道加 MockCodex，作用是模拟微信消息进入中间件；`cli:terminal:codex` 会先检测真实 Codex CLI，然后让用户先选择会话、再选择权限模式，最后通过 `codex exec --json` 与真实 Codex 通信。
+其中 `cli:terminal:mock` 是本地终端通道加 MockCodex，作用是模拟微信消息进入中间件；`cli:terminal:codex` 会先检测真实 Codex CLI，然后让用户先选择会话、再选择权限模式，默认通过 `codex app-server` 与真实 Codex 通信。需要回退到非交互 CLI JSONL 时，可传 `--codex-adapter exec`。
 
 真实 Codex 模式在创建新会话时会展示默认工作目录，用户可输入其他目录；目录不存在时会自动创建。选择历史会话时不询问新工作目录，而是使用 Codex 历史 session 元数据里的原工作目录。
 
@@ -89,4 +89,4 @@ npm run cli:weixin:login
 npm run cli:weixin:codex
 ```
 
-`weixin login` 已具备二维码登录入口。`weixin codex` 是真实微信通道 + Codex 的启动入口：启动时会读取本地微信凭证，已登录则直接启动，未登录则弹出二维码登录流程。真实扫码登录完成后要追加真实微信通道测试报告。
+`weixin login` 已具备二维码登录入口。`weixin codex` 是真实微信通道 + Codex 的启动入口：启动时会读取本地微信凭证，已登录则直接启动，未登录则弹出二维码登录流程。默认 app-server 模式可以把 Codex command/file/permissions 审批请求推送到微信，并由 `/OK` 或 `/NO [理由]` 回写 Codex。真实扫码登录完成后要追加真实微信通道测试报告。

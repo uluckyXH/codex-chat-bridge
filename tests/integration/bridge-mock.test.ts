@@ -39,6 +39,27 @@ class ProgressCodexAdapter extends MockCodexAdapter {
   }
 }
 
+class AdapterApprovalIdCodexAdapter extends MockCodexAdapter {
+  override async *run(sessionId: string, _prompt: string): AsyncIterable<CodexEvent> {
+    const turnId = "adapter-approval-turn-1";
+    yield { type: "turn.started", sessionId, turnId };
+    yield {
+      type: "approval.requested",
+      sessionId,
+      turnId,
+      approval: {
+        kind: "command",
+        adapterApprovalId: "server-request-1",
+        sessionId,
+        turnId,
+        itemId: "cmd-1",
+        command: "touch app-server-approved.txt",
+      },
+    };
+    yield { type: "turn.completed", sessionId, turnId };
+  }
+}
+
 class CancellableCodexAdapter implements CodexAdapter {
   private sequence = 0;
   private readonly sessions = new Map<string, CodexSession>();
@@ -183,6 +204,23 @@ test("Bridge rejects latest approval with /NO and an optional reason", async () 
   assert.equal(codex.resolvedApprovals[0].decision, "deny");
   assert.equal(codex.resolvedApprovals[0].reason, "这个命令会删除文件");
   assert.ok(channel.sentMessages.some((message) => message.text.includes("理由: 这个命令会删除文件")));
+});
+
+test("Bridge resolves approvals with adapter approval ids when provided", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new AdapterApprovalIdCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("触发 app-server 审批");
+  await bridge.waitForIdle();
+  await channel.emitText("/OK");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.equal(codex.resolvedApprovals.length, 1);
+  assert.equal(codex.resolvedApprovals[0].approvalKey, "server-request-1");
+  assert.equal(codex.resolvedApprovals[0].decision, "approve");
 });
 
 test("Bridge emits transcript events for inbound channel text and outbound replies", async () => {

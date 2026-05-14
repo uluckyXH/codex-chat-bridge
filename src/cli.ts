@@ -6,8 +6,10 @@ import { MockChannelAdapter } from "./channels/mock/mock-channel-adapter.js";
 import { TerminalChannelAdapter } from "./channels/terminal/terminal-channel-adapter.js";
 import { WeixinAdapter } from "./channels/weixin/weixin-adapter.js";
 import { checkCodexCli, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
+import { AppServerCodexAdapter } from "./codex/app-server-codex-adapter.js";
 import { ExecCodexAdapter } from "./codex/exec-codex-adapter.js";
 import { MockCodexAdapter } from "./codex/mock-codex-adapter.js";
+import type { CodexAdapter } from "./codex/types.js";
 import { resolveNewSessionWorkdir } from "./codex/workdir.js";
 import { ConsoleLogger } from "./logging/logger.js";
 import { ConsoleTranscriptSink } from "./logging/transcript.js";
@@ -15,13 +17,17 @@ import { ConsoleTranscriptSink } from "./logging/transcript.js";
 interface StartupOptions {
   session?: string;
   permission?: CodexPermissionMode;
+  codexAdapter?: RealCodexAdapterMode;
   yesDangerouslyFull?: boolean;
   cwd?: string;
   progressMode?: ProgressDeliveryMode;
 }
 
+type RealCodexAdapterMode = "app-server" | "exec";
+
 interface PreparedCodexStartup {
   policy: CodexRunPolicy;
+  adapterMode: RealCodexAdapterMode;
   sessionId?: string;
   sessionTitle?: string;
   cwd: string;
@@ -121,6 +127,12 @@ function parseStartupOptions(args: string[]): StartupOptions {
         throw new Error("--permission 只能是 approval 或 full");
       }
       options.permission = value;
+    } else if (arg === "--codex-adapter" || arg === "--adapter") {
+      const value = args[++index];
+      if (value !== "app-server" && value !== "exec") {
+        throw new Error(`${arg} 只能是 app-server 或 exec`);
+      }
+      options.codexAdapter = value;
     } else if (arg === "--yes-dangerously-full") {
       options.yesDangerouslyFull = true;
     } else if (arg === "--cwd" || arg === "--workdir") {
@@ -142,8 +154,8 @@ function parseStartupOptions(args: string[]): StartupOptions {
 
 async function runTerminalBridge(mode: "mock" | "codex", options: StartupOptions = {}): Promise<void> {
   const channel = new TerminalChannelAdapter();
-  const startup = mode === "codex" ? await prepareCodexStartup(options) : { policy: undefined, sessionId: undefined, cwd: process.cwd() };
-  const codex = mode === "codex" ? new ExecCodexAdapter({ runPolicy: startup.policy }) : new MockCodexAdapter();
+  const startup = mode === "codex" ? await prepareCodexStartup(options) : { policy: undefined, adapterMode: undefined, sessionId: undefined, cwd: process.cwd() };
+  const codex = mode === "codex" ? createRealCodexAdapter(startup) : new MockCodexAdapter();
   const bridge = new Bridge({
     channel,
     codex,
@@ -168,7 +180,7 @@ async function runTerminalBridge(mode: "mock" | "codex", options: StartupOptions
 async function runWeixinCodexBridge(options: StartupOptions = {}): Promise<void> {
   const startup = await prepareCodexStartup(options);
   const channel = new WeixinAdapter({ verifyCodeProvider: askStdin });
-  const codex = new ExecCodexAdapter({ runPolicy: startup.policy });
+  const codex = createRealCodexAdapter(startup);
   const bridge = new Bridge({
     channel,
     codex,
@@ -234,6 +246,7 @@ async function prepareCodexStartup(options: StartupOptions): Promise<PreparedCod
   const rl = interactive ? createInterface({ input: stdin, output: stdout }) : undefined;
   try {
     const sessions = discoverCodexSessions({ limit: 10 });
+    const adapterMode = options.codexAdapter ?? "app-server";
     const sessionChoice = await resolveSessionChoice(options, rl, sessions);
     const cwd = sessionChoice.sessionId
       ? resolveExistingSessionCwd(sessionChoice, options.cwd)
@@ -248,10 +261,12 @@ async function prepareCodexStartup(options: StartupOptions): Promise<PreparedCod
       sessionTitle: sessionChoice.session ? displayCodexSessionTitle(sessionChoice.session) : undefined,
       cwd,
       policy,
+      adapterMode,
       progressMode: options.progressMode,
     });
     return {
       policy,
+      adapterMode,
       sessionId: sessionChoice.sessionId,
       sessionTitle: sessionChoice.session ? displayCodexSessionTitle(sessionChoice.session) : undefined,
       cwd,
@@ -273,7 +288,7 @@ async function resolvePermissionMode(options: StartupOptions, rl?: Interface): P
   if (!rl) return "approval";
   console.log("");
   console.log("Codex 权限模式（作用于本次启动后的后续任务）");
-  console.log("1. approval - 使用 workspace-write sandbox；当前 codex exec 不支持交互审批");
+  console.log("1. approval - 使用 workspace-write sandbox；app-server 可把审批推送到微信 /OK 或 /NO");
   console.log("2. full - 完全权限，跳过审批和沙箱，非常危险");
   const answer = (await rl.question("请选择权限模式 [1]: ")).trim();
   if (answer === "2" || answer.toLowerCase() === "full") {
@@ -369,6 +384,7 @@ function printStartupSelection(params: {
   sessionTitle?: string;
   cwd: string;
   policy: CodexRunPolicy;
+  adapterMode: RealCodexAdapterMode;
   progressMode?: ProgressDeliveryMode;
 }): void {
   console.log("");
@@ -376,13 +392,14 @@ function printStartupSelection(params: {
   console.log(`- 会话: ${params.sessionId ? `恢复 ${params.sessionId}` : "新建"}`);
   if (params.sessionTitle) console.log(`- 标题: ${params.sessionTitle}`);
   console.log(`- 工作目录: ${params.cwd}`);
+  console.log(`- Codex Adapter: ${formatAdapterForCli(params.adapterMode)}`);
   console.log(`- 权限: ${formatPolicyForCli(params.policy)}`);
   console.log(`- 进度: ${params.progressMode ?? "brief"}`);
 }
 
 function printRuntimeSummary(
   title: string,
-  startup: PreparedCodexStartup | { policy?: CodexRunPolicy; sessionId?: string; sessionTitle?: string; cwd: string },
+  startup: PreparedCodexStartup | { policy?: CodexRunPolicy; adapterMode?: RealCodexAdapterMode; sessionId?: string; sessionTitle?: string; cwd: string },
   progressMode?: ProgressDeliveryMode,
 ): void {
   console.log("");
@@ -390,6 +407,7 @@ function printRuntimeSummary(
   console.log(`- 会话: ${startup.sessionId ? `首个聊天绑定 ${startup.sessionId}` : "首条消息自动新建"}`);
   if (startup.sessionTitle) console.log(`- 标题: ${startup.sessionTitle}`);
   console.log(`- 工作目录: ${startup.cwd}`);
+  if (startup.adapterMode) console.log(`- Codex Adapter: ${formatAdapterForCli(startup.adapterMode)}`);
   if (startup.policy) console.log(`- 权限: ${formatPolicyForCli(startup.policy)}`);
   console.log(`- 进度: ${progressMode ?? "brief"}`);
   console.log("- 退出: Ctrl+C");
@@ -408,7 +426,20 @@ function formatPolicyForCli(policy: CodexRunPolicy): string {
   if (policy.permissionMode === "full") {
     return "full（跳过审批和沙箱）";
   }
-  return `approval（sandbox=${policy.sandbox ?? "workspace-write"}；codex exec 不支持交互审批）`;
+  return `approval（sandbox=${policy.sandbox ?? "workspace-write"}）`;
+}
+
+function formatAdapterForCli(adapterMode: RealCodexAdapterMode): string {
+  if (adapterMode === "app-server") return "app-server（支持微信交互审批）";
+  return "exec（非交互；不支持微信审批，仅作为回退）";
+}
+
+function createRealCodexAdapter(startup: PreparedCodexStartup | { policy?: CodexRunPolicy; adapterMode?: RealCodexAdapterMode }): CodexAdapter {
+  const runPolicy = startup.policy ?? { permissionMode: "approval", sandbox: "workspace-write" };
+  if (startup.adapterMode === "exec") {
+    return new ExecCodexAdapter({ runPolicy });
+  }
+  return new AppServerCodexAdapter({ runPolicy });
 }
 
 function printHelp(): void {
@@ -418,13 +449,14 @@ function printHelp(): void {
     "Commands:",
     "  codex-wechat-bridge codex test     运行本地 mock Codex/Channel 流程",
     "  codex-wechat-bridge terminal mock  启动本地终端通道 + MockCodex",
-    "  codex-wechat-bridge terminal codex 启动本地终端通道 + codex exec",
+    "  codex-wechat-bridge terminal codex 启动本地终端通道 + Codex",
     "    --session new|last|<id>          选择新会话或已有 Codex 会话",
     "    --cwd <dir>, --workdir <dir>     设置新会话工作目录；目录不存在会自动创建",
     "    --permission approval|full       设置安全沙箱或完全权限",
+    "    --codex-adapter app-server|exec  设置 Codex 接入方式；默认 app-server，支持微信审批",
     "    --yes-dangerously-full           非交互确认完全权限",
     "    --progress brief|detailed|silent 设置默认进度投递模式",
-    "  codex-wechat-bridge weixin codex   启动真实微信通道 + codex exec",
+    "  codex-wechat-bridge weixin codex   启动真实微信通道 + Codex app-server",
     "  codex-wechat-bridge weixin status  查看 WeixinAdapter 当前状态",
     "  codex-wechat-bridge weixin login   显示第二阶段登录提示",
     "  codex-wechat-bridge start          当前等同 terminal mock",

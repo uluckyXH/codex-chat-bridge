@@ -4,6 +4,7 @@ export type ApprovalDecision = "approve" | "approve-session" | "deny" | "cancel"
 
 export interface ApprovalRequest {
   kind: ApprovalKind;
+  adapterApprovalId?: string;
   sessionId: string;
   turnId: string;
   itemId: string;

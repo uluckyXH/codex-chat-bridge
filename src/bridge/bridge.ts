@@ -65,6 +65,7 @@ export class Bridge {
 
   async stop(): Promise<void> {
     await this.channel.stop();
+    await this.codex.stop?.();
     this.logger.info("bridge stopped", { channel: this.channel.id });
   }
 
@@ -305,7 +306,7 @@ export class Bridge {
     }
     try {
       const pending = this.approvals.decide(key, message.routeKey, decision, parsed.reason);
-      await this.codex.resolveApproval?.(pending.approvalKey, decision, parsed.reason);
+      await this.codex.resolveApproval?.(pending.adapterApprovalId ?? pending.approvalKey, decision, parsed.reason);
       await this.sendText(target, [
         `审批已处理: ${formatApprovalDecision(decision)}`,
         parsed.reason ? `理由: ${parsed.reason}` : undefined,
@@ -351,6 +352,7 @@ export class Bridge {
       return;
     }
     await this.codex.cancel(binding.sessionId);
+    this.approvals.cancelRoute(message.routeKey, "任务已停止");
     this.state.setSessionStatus(binding.sessionId, { type: "idle" });
     await this.sendTyping(target, false);
     await this.sendText(target, "已请求停止当前 Codex 任务。");
