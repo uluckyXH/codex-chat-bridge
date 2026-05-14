@@ -144,6 +144,7 @@ type ChannelAdapter = {
   onMessage(handler: (message: ChannelMessage) => Promise<void>): void;
   sendText(target: ChannelTarget, text: string, options?: SendOptions): Promise<SendResult>;
   sendMedia?(target: ChannelTarget, media: ChannelMedia, options?: SendOptions): Promise<SendResult>;
+  sendTyping?(target: ChannelTarget, typing: boolean, options?: SendOptions): Promise<void>;
 };
 ```
 
@@ -251,6 +252,7 @@ WeixinAdapter implements ChannelAdapter
 - 登录 token 默认保存在项目根目录下 `state/weixin/`，该目录被 Git 忽略。
 - 账号 ID 会做文件名安全归一化，例如 `abc@im.bot` 归一化为 `abc-im-bot`。
 - `context_token` 会从微信入站消息带入 `ChannelTarget.context.contextToken`，发送回复时回传给 `sendmessage`。
+- typing 使用 `getconfig` 获取 `typing_ticket`，再调用 `sendtyping`。Bridge 在 Codex 运行期间每 5 秒续发一次 typing start，任务完成或 `/stop` 后发送 typing stop；typing 失败只记录警告，不中断 Codex 正常回复。
 - 当前没有定时刷新 token 的协议；登录后复用服务端返回的 `bot_token`。如果 `getupdates` 返回 session 失效码 `-14`，通道状态切换为 `login_required`，停止当前轮询，等待用户重新扫码登录。旧 token 会保留，用于下一次二维码登录时作为 `local_token_list` 传给服务端识别已绑定账号。
 - `weixin status` 会读取本地账号凭证但不启动长轮询；有凭证时显示 `connected`，无凭证时显示 `login_required`。
 
@@ -288,6 +290,7 @@ WeixinAdapter implements ChannelAdapter
 - `onMessage(handler)`
 - `sendText(target, text)`
 - `sendMedia(target, media)`
+- `sendTyping(target, typing)`
 - `getCapabilities()`
 
 对内统一消息模型：
@@ -338,8 +341,9 @@ type ChannelMessage = {
 - `/whoami`
 - `/debug`
 - `/OK` 或 `/approve [id]`
-- `/NO` 或 `/deny [id]`
+- `/NO [理由]` 或 `/deny [id] [理由]`
 - `/approve-session [id]`
+- `/stop`
 
 命令处理结果直接通过 Channel Adapter 回复微信，不进入 Codex。
 
@@ -756,11 +760,16 @@ Status: idle
 普通用户输出：
 
 ```text
-Codex: running
-WeChat: connected
+Bridge: ok
+Channel: weixin connected
+Processing: yes
+Codex: running turn=exec-turn-123 task=修复测试
 Session: cdx-8f2a
-Last: 00:41
-Task: processing
+Progress mode: brief
+Cwd: /path/to/project
+Queued messages: 0
+Pending approvals: 0
+操作: /stop 终止当前任务
 ```
 
 管理员输出：
@@ -775,6 +784,17 @@ Last inbound: 00:41
 Last outbound: 00:40
 Last error: none
 ```
+
+`/status` 是命令消息，不进入普通 prompt 队列；Codex 正在执行时也应立即回复。`Processing: yes` 来自 Bridge route worker，`Codex: ...` 来自 Codex Adapter 状态，二者结合用于判断是否可用 `/stop`。
+
+## 8.0.1 `/stop` 设计
+
+`/stop` 只终止当前微信上下文绑定的 Codex 正在处理任务，不退出 Bridge，也不删除 Codex 会话绑定。
+
+- 对 CLI exec adapter：记录当前子进程，收到 `/stop` 后向该进程发送 `SIGTERM`，2 秒后仍未退出则 `SIGKILL`。
+- 对后续 app-server adapter：映射到 turn interrupt/cancel 能力。
+- `/cancel` 无 ID 时兼容为 `/stop`；`/cancel <id>` 仍用于取消指定审批。
+- `/stop` 不清空后续已排队普通消息，队列仍按顺序继续处理。
 
 ## 8.1 Codex 批准流设计
 
@@ -832,7 +852,7 @@ Reason: inspect workspace state
 
 快捷回复：
 /OK
-/NO
+/NO [理由]
 
 带 ID 回复：
 /approve a7k3
@@ -854,24 +874,24 @@ Reason: inspect workspace state
 
 - `/OK` 或 `/approve [id]` -> `accept`
 - `/approve-session [id]` -> `acceptForSession`
-- `/NO` 或 `/deny [id]` -> `decline`
+- `/NO [理由]` 或 `/deny [id] [理由]` -> `decline`
 - `/cancel <id>` -> `cancel`
 
 文件变更审批：
 
 - `/OK` 或 `/approve [id]` -> `accept`
 - `/approve-session [id]` -> `acceptForSession`
-- `/NO` 或 `/deny [id]` -> `decline`
+- `/NO [理由]` 或 `/deny [id] [理由]` -> `decline`
 - `/cancel <id>` -> `cancel`
 
 权限审批：
 
 - `/OK` 或 `/approve [id]` -> 只批准请求的最低权限和当前 turn scope。
 - `/approve-session [id]` -> 需要管理员权限，批准 session scope。
-- `/NO` 或 `/deny [id]` -> 返回最小或空权限。
+- `/NO [理由]` 或 `/deny [id] [理由]` -> 返回最小或空权限。
 - `/cancel <id>` -> 返回拒绝并尝试中断当前 turn。
 
-无 ID 的审批命令只作用于当前 `routeKey` 最新的 pending approval；同一上下文存在多个待审批时，仍保留带 ID 命令用于精确选择。
+无 ID 的审批命令只作用于当前 `routeKey` 最新的 pending approval；同一上下文存在多个待审批时，仍保留带 ID 命令用于精确选择。拒绝理由保存在审批记录里，并通过 `CodexAdapter.resolveApproval(approvalKey, decision, reason?)` 传给后续 adapter；当前 CLI exec adapter 没有完整审批协议时只在桥接层确认。
 
 网络或 exec policy 持久化放行：
 
@@ -910,7 +930,8 @@ CLI JSONL adapter 可用事件：
 当前 CLI JSONL adapter 的阶段性微信输出：
 
 - `turn.started`：Bridge 发送“Codex 开始处理”。
-- `item.completed` + `reasoning`：发送 `Codex 进度`，内容为 Codex 提供的 reasoning summary。
+- `item.completed` + `reasoning`：发送 `Codex 进度`，内容为 Codex 提供的 reasoning summary；兼容 `summary`、`summary_text`、顶层 `codex_thinking` 等不同 JSONL 形态。
+- `item.updated` + `plan_update`：发送计划更新，归类为 brief 模式可见的自言自语/计划进度。
 - `item.started/completed` + `command_execution`：发送命令开始或完成摘要；当 `aggregated_output` 中出现图片路径/URL 后缀时，把相关输出片段带入进度文本，交给 Bridge 的媒体抽取逻辑处理。
 - `item.completed` + `file_change`：发送文件变更摘要。
 - `mcp_tool_call`、`web_search`、`todo_list`：发送工具、搜索或计划摘要。
@@ -945,12 +966,13 @@ app-server adapter 可用事件：
 微信不适合逐 token 发送。需要节流和合并：
 
 - agent message delta 每 2 到 5 秒或累计 300 到 800 字发送一次。
-- reasoning summary 默认不发送给普通用户，只在 debug 或管理员模式发送摘要。
+- reasoning summary/计划更新在默认 `brief` 模式发送，作为用户可见的“自言自语”进度；命令和工具细节仍默认隐藏。
 - command output 默认只发送开始、结束、失败和最后若干行摘要。
 - 文件变更默认发送文件列表摘要，不直接发送完整 diff。
 - turn 完成后发送最终结果，并标记为“完成”。
 - turn 失败或中断时发送明确状态。
 - 图片和显式文件引用会跟随阶段性输出和最终回复被抽取；文本先发送，媒体后发送。图片会自动识别常见图片后缀，普通文件需要 Markdown 链接或 `FILE:`、`文件:` 等显式标记。若微信媒体上传失败，会退回一条包含路径/URL、类型和 MIME 信息的文本说明。
+- Codex 运行期间启用微信 typing：`getconfig` 获取 ticket，`sendtyping` 周期续发；turn 完成、失败或 `/stop` 后停止 typing。
 - `WeixinAdapter` 出站发送采用单队列串行和最小发送间隔，降低连续进度消息在微信侧丢显或乱序的概率。
 - `sendmessage`、`getuploadurl` 的 HTTP 200 不直接视为成功；若 JSON 里 `ret/errcode` 非 0，会抛错并更新通道 `lastError`，避免终端 transcript 把失败请求打印成成功 OUT。
 

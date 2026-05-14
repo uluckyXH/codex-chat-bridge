@@ -144,6 +144,52 @@ test("WeixinAdapter treats sendmessage errcode as delivery failure", async () =>
   assert.match(status.lastError ?? "", /45009/);
 });
 
+test("WeixinAdapter sends typing state with getconfig typing ticket", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-1",
+    baseUrl: "https://api.example",
+    savedAt: new Date().toISOString(),
+  });
+  const calls: Array<{ url: string; body?: string }> = [];
+  const fetchImpl: FetchLike = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, body: typeof init?.body === "string" ? init.body : undefined });
+    if (url.includes("getconfig")) return jsonResponse({ typing_ticket: "typing-ticket-1" });
+    if (url.includes("sendtyping")) return jsonResponse({});
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    pollOnStart: false,
+    outboundMinIntervalMs: 0,
+    apiOptions: { fetch: fetchImpl },
+  });
+  const target = {
+    channelId: "weixin",
+    routeKey: "weixin:abc-im-bot:direct:user@im.wechat",
+    accountId: "abc-im-bot",
+    conversation: { id: "user@im.wechat", kind: "direct" as const },
+    recipient: { id: "user@im.wechat" },
+    context: { contextToken: "ctx-1" },
+  };
+
+  await adapter.sendTyping(target, true);
+  await adapter.sendTyping(target, false);
+
+  const configBody = JSON.parse(calls.find((call) => call.url.includes("getconfig"))?.body ?? "{}");
+  assert.equal(configBody.ilink_user_id, "user@im.wechat");
+  assert.equal(configBody.context_token, "ctx-1");
+  const typingBodies = calls
+    .filter((call) => call.url.includes("sendtyping"))
+    .map((call) => JSON.parse(call.body ?? "{}"));
+  assert.equal(calls.filter((call) => call.url.includes("getconfig")).length, 1);
+  assert.deepEqual(typingBodies.map((body) => body.status), [1, 2]);
+  assert.ok(typingBodies.every((body) => body.typing_ticket === "typing-ticket-1"));
+});
+
 test("WeixinAdapter uploads and sends image media with caption", async () => {
   const store = new FileWeixinAccountStore(tempStateDir());
   store.saveAccount({

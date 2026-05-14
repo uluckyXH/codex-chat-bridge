@@ -11,7 +11,7 @@ import type {
 export class MockCodexAdapter implements CodexAdapter {
   private sequence = 0;
   private readonly sessions = new Map<string, { session: CodexSession; routeKey: string; status: CodexSessionStatus }>();
-  readonly resolvedApprovals: Array<{ approvalKey: string; decision: ApprovalDecision }> = [];
+  readonly resolvedApprovals: Array<{ approvalKey: string; decision: ApprovalDecision; reason?: string }> = [];
 
   async startSession(input: StartSessionInput): Promise<CodexSession> {
     this.sequence += 1;
@@ -85,7 +85,11 @@ export class MockCodexAdapter implements CodexAdapter {
       }));
   }
 
-  async resolveApproval(approvalKey: string, decision: ApprovalDecision): Promise<void> {
-    this.resolvedApprovals.push({ approvalKey, decision });
+  async resolveApproval(approvalKey: string, decision: ApprovalDecision, reason?: string): Promise<void> {
+    this.resolvedApprovals.push({
+      approvalKey,
+      decision,
+      ...(reason ? { reason } : {}),
+    });
   }
 }

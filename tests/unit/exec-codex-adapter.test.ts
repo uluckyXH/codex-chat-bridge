@@ -59,6 +59,49 @@ test("parseExecJsonLine maps exec progress items", () => {
   });
 
   assert.deepEqual(parseExecJsonLine(
+    JSON.stringify({
+      type: "item.completed",
+      item: {
+        id: "reasoning-2",
+        item_type: "reasoning",
+        summary: [{ text: "我会先确认状态，再执行修复。" }],
+      },
+    }),
+    "local-session",
+    "turn-1",
+  )?.event, {
+    type: "assistant.progress",
+    sessionId: "local-session",
+    turnId: "turn-1",
+    text: "我会先确认状态，再执行修复。",
+    kind: "reasoning",
+  });
+
+  assert.deepEqual(parseExecJsonLine(
+    JSON.stringify({ type: "codex_thinking", text: "正在判断下一步。" }),
+    "local-session",
+    "turn-1",
+  )?.event, {
+    type: "assistant.progress",
+    sessionId: "local-session",
+    turnId: "turn-1",
+    text: "正在判断下一步。",
+    kind: "reasoning",
+  });
+
+  assert.deepEqual(parseExecJsonLine(
+    JSON.stringify({ type: "item.updated", item: { id: "plan-1", type: "plan_update", plan: [{ step: "读取状态" }] } }),
+    "local-session",
+    "turn-1",
+  )?.event, {
+    type: "assistant.progress",
+    sessionId: "local-session",
+    turnId: "turn-1",
+    text: "计划更新: 读取状态",
+    kind: "todo",
+  });
+
+  assert.deepEqual(parseExecJsonLine(
     JSON.stringify({ type: "item.started", item: { id: "cmd-1", type: "command_execution", command: "npm test" } }),
     "local-session",
     "turn-1",
@@ -159,3 +202,46 @@ test("ExecCodexAdapter lists discovered Codex sessions when route is not scoped"
 
   assert.equal(sessions.some((session) => session.id === "thread-history" && session.cwd === cwd), true);
 });
+
+test("ExecCodexAdapter cancel terminates a running exec task", async () => {
+  const root = tempDir();
+  const fakeScript = path.join(root, "fake-codex.js");
+  const fakeBin = path.join(root, "fake-codex");
+  fs.writeFileSync(fakeScript, [
+    "console.log(JSON.stringify({ type: 'thread.started', thread_id: 'thread-cancel' }));",
+    "setInterval(() => {}, 1000);",
+  ].join("\n"));
+  fs.writeFileSync(fakeBin, [
+    "#!/bin/sh",
+    `exec "${process.execPath}" "${fakeScript}" "$@"`,
+  ].join("\n"));
+  fs.chmodSync(fakeBin, 0o755);
+  const adapter = new ExecCodexAdapter({ codexBin: fakeBin });
+  const session = await adapter.startSession({
+    routeKey: "route-a",
+    cwd: root,
+    title: "cancel-test",
+  });
+  const events: string[] = [];
+  const runPromise = (async () => {
+    for await (const event of adapter.run(session.id, "长任务")) {
+      events.push(event.type);
+    }
+  })();
+
+  await waitFor(async () => (await adapter.getStatus(session.id)).type === "running");
+  await adapter.cancel(session.id);
+  await runPromise;
+
+  assert.deepEqual(events, ["turn.started", "turn.completed"]);
+  assert.equal((await adapter.getStatus(session.id)).type, "idle");
+});
+
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting for condition");
+}

@@ -1,12 +1,15 @@
 import crypto from "node:crypto";
 import type {
   WeixinBaseInfo,
+  WeixinGetConfigRequest,
+  WeixinGetConfigResponse,
   WeixinGetUpdatesResponse,
   WeixinGetUploadUrlRequest,
   WeixinGetUploadUrlResponse,
   WeixinQrStartResponse,
   WeixinQrStatusResponse,
   WeixinSendMessageRequest,
+  WeixinSendTypingRequest,
 } from "./weixin-types.js";
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -105,6 +108,41 @@ export class WeixinApiClient {
     });
     assertWeixinApiSuccess(response, "getuploadurl");
     return response;
+  }
+
+  async getConfig(params: {
+    token: string;
+    body: WeixinGetConfigRequest;
+    timeoutMs?: number;
+  }): Promise<WeixinGetConfigResponse> {
+    const response = await this.postJson<WeixinGetConfigResponse>({
+      endpoint: "ilink/bot/getconfig",
+      token: params.token,
+      timeoutMs: params.timeoutMs,
+      body: {
+        ...params.body,
+        base_info: this.baseInfo(),
+      },
+    });
+    assertWeixinApiSuccess(response, "getconfig");
+    return response;
+  }
+
+  async sendTyping(params: {
+    token: string;
+    body: WeixinSendTypingRequest;
+    timeoutMs?: number;
+  }): Promise<void> {
+    const response = await this.postJson<WeixinGetConfigResponse>({
+      endpoint: "ilink/bot/sendtyping",
+      token: params.token,
+      timeoutMs: params.timeoutMs,
+      body: {
+        ...params.body,
+        base_info: this.baseInfo(),
+      },
+    });
+    assertWeixinApiSuccess(response, "sendtyping");
   }
 
   async uploadCdnBuffer(params: {

@@ -47,9 +47,9 @@ During interactive startup, choosing a new session displays the default working 
 
 The current `codex exec --json` mode can reuse Codex history sessions, but it does not live-sync Weixin-side interaction into another already-open Codex CLI or Codex App window. Real-time multi-view synchronization needs a later app-server/event-subscription adapter, or a middleware-owned observer UI where the middleware is the single session entry point.
 
-Normal messages from the same channel context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/cancel`, and approval commands still run immediately. Current progress updates come from events visible in `codex exec --json`. The default `brief` progress mode sends planning/reasoning, search, and file-change summaries, but suppresses command/tool details. Use `/progress detailed` or `--progress detailed` when full debugging detail is needed. Finer same-turn steering needs a later app-server adapter.
+Normal messages from the same channel context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/stop`, and approval commands still run immediately. Current progress updates come from events visible in `codex exec --json`. The default `brief` progress mode sends planning/reasoning, search, and file-change summaries, but suppresses command/tool details. Use `/progress detailed` or `--progress detailed` when full debugging detail is needed. Finer same-turn steering needs a later app-server adapter.
 
-Weixin outbound messages are serialized with a small interval to reduce dropped or hidden rapid-fire progress messages. If `sendmessage` returns a business error code, the channel enters `degraded` state and records `lastError` instead of logging the request as a successful OUT.
+Weixin outbound messages are serialized with a small interval to reduce dropped or hidden rapid-fire progress messages. While Codex is running, the Weixin channel fetches a `typing_ticket` with `getconfig`, then periodically calls `sendtyping` to keep the peer-side "typing" state visible; it stops typing when the task finishes or `/stop` is used. If `sendmessage` returns a business error code, the channel enters `degraded` state and records `lastError` instead of logging the request as a successful OUT.
 
 When Codex output contains an accessible media reference, the bridge sends the text first and then attempts a media message. Images are detected from common image suffixes. Regular files are extracted only from explicit references such as Markdown links, `MEDIA:`/`FILE:` directives, and `File:`/`Attachment:` labels, so code paths in progress summaries are not sent as attachments. Local files must exist. Weixin sends images as `image_item` and regular files as `file_item`; both use `getuploadurl` plus CDN upload. Unsupported channels or failed media sends get a text fallback with the file location.
 
@@ -57,14 +57,16 @@ When Codex output contains an accessible media reference, the bridge sends the t
 
 - `/help`: show available commands.
 - `/new`: create a new Codex session for the current channel context.
-- `/status`: show Bridge, channel, Codex, session, and working directory status.
+- `/status`: show Bridge, channel, Codex, processing, queue, session, and working directory status.
 - `/sessions`: list sessions known to the current channel context.
 - `/sessions all` or `/all-sessions`: list all discoverable Codex history session IDs.
 - `/resume <session>` / `/use <session>`: resume and bind a Codex session.
 - `/progress [brief|detailed|silent]`: show or set progress delivery mode for the current channel context.
 - `/OK` or `/approve [id]`: approve the current or specified Codex approval.
-- `/NO` or `/deny [id]`: deny the current or specified Codex approval.
-- `/approve-session [id]`, `/cancel [id]`: approve for the session, cancel an approval, or cancel the current task.
+- `/NO [reason]` or `/deny [id] [reason]`: deny the current or specified Codex approval and record the reason.
+- `/approve-session [id]`: approve the current or specified approval for the session.
+- `/stop`: stop the currently running Codex task without ending the Codex session.
+- `/cancel [id]`: cancel a specified approval; without an ID it behaves like `/stop`.
 
 ## Documentation
 

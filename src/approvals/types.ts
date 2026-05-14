@@ -23,4 +23,5 @@ export interface PendingApproval extends ApprovalRequest {
   expiresAt: string;
   status: "pending" | "resolved" | "expired";
   decision?: ApprovalDecision;
+  decisionReason?: string;
 }

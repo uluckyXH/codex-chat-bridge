@@ -129,6 +129,24 @@ export interface WeixinSendMessageRequest {
   msg?: WeixinMessage;
 }
 
+export interface WeixinGetConfigRequest {
+  ilink_user_id?: string;
+  context_token?: string;
+}
+
+export interface WeixinGetConfigResponse {
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  typing_ticket?: string;
+}
+
+export interface WeixinSendTypingRequest {
+  ilink_user_id?: string;
+  typing_ticket?: string;
+  status?: number;
+}
+
 export interface WeixinGetUploadUrlRequest {
   filekey?: string;
   media_type?: number;

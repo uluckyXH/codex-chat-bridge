@@ -124,26 +124,29 @@ export class Bridge {
         return;
       case "ok":
       case "yes":
-        await this.resolveApproval(message, target, args[0], "approve");
+        await this.resolveApproval(message, target, args, "approve");
         return;
       case "no":
-        await this.resolveApproval(message, target, args[0], "deny");
+        await this.resolveApproval(message, target, args, "deny");
         return;
       case "approve":
-        await this.resolveApproval(message, target, args[0], "approve");
+        await this.resolveApproval(message, target, args, "approve");
         return;
       case "approve-session":
-        await this.resolveApproval(message, target, args[0], "approve-session");
+        await this.resolveApproval(message, target, args, "approve-session");
         return;
       case "deny":
       case "reject":
-        await this.resolveApproval(message, target, args[0], "deny");
+        await this.resolveApproval(message, target, args, "deny");
+        return;
+      case "stop":
+        await this.stopCurrentTask(message, target);
         return;
       case "cancel":
         if (args[0]) {
-          await this.resolveApproval(message, target, args[0], "cancel");
+          await this.resolveApproval(message, target, args, "cancel");
         } else {
-          await this.cancelSession(message, target);
+          await this.stopCurrentTask(message, target);
         }
         return;
       default:
@@ -230,38 +233,44 @@ export class Bridge {
       `Session: ${session.id}`,
       remainingQueued > 0 ? `Queue: 后面还有 ${remainingQueued} 条` : undefined,
     ].filter(Boolean).join("\n"));
-    let finalText = "";
-    const sentMediaKeys = new Set<string>();
-    for await (const event of this.codex.run(session.id, prompt)) {
-      if (event.type === "turn.started") {
-        this.state.setSessionStatus(session.id, { type: "running", turnId: event.turnId });
-      } else if (event.type === "assistant.progress") {
-        if (this.shouldDeliverProgress(message.routeKey, event.kind)) {
-          await this.sendProgressText(target, `Codex 进度:\n${truncateForChannel(event.text)}`);
+    await this.withTyping(target, async () => {
+      let finalText = "";
+      const sentMediaKeys = new Set<string>();
+      for await (const event of this.codex.run(session.id, prompt)) {
+        if (event.type === "turn.started") {
+          this.state.setSessionStatus(session.id, {
+            type: "running",
+            turnId: event.turnId,
+            task: truncateForChannel(prompt, 120),
+          });
+        } else if (event.type === "assistant.progress") {
+          if (this.shouldDeliverProgress(message.routeKey, event.kind)) {
+            await this.sendProgressText(target, `Codex 进度:\n${truncateForChannel(event.text)}`);
+          }
+          await this.sendExtractedMedia(target, event.text, session.cwd, sentMediaKeys);
+        } else if (event.type === "assistant.delta") {
+          finalText += event.text;
+        } else if (event.type === "assistant.completed") {
+          finalText = event.text;
+        } else if (event.type === "approval.requested") {
+          this.state.setSessionStatus(session.id, {
+            type: "waiting_approval",
+            detail: event.approval.reason ?? event.approval.kind,
+          });
+          const pending = this.approvals.create(message.routeKey, message.sender.id, event.approval);
+          await this.sendText(target, this.approvals.formatForChannel(pending));
+        } else if (event.type === "turn.completed") {
+          this.state.setSessionStatus(session.id, { type: "idle" });
+        } else if (event.type === "turn.failed") {
+          this.state.setSessionStatus(session.id, { type: "failed", error: event.error });
+          await this.sendText(target, `Codex 执行失败: ${event.error}`);
         }
-        await this.sendExtractedMedia(target, event.text, session.cwd, sentMediaKeys);
-      } else if (event.type === "assistant.delta") {
-        finalText += event.text;
-      } else if (event.type === "assistant.completed") {
-        finalText = event.text;
-      } else if (event.type === "approval.requested") {
-        this.state.setSessionStatus(session.id, {
-          type: "waiting_approval",
-          detail: event.approval.reason ?? event.approval.kind,
-        });
-        const pending = this.approvals.create(message.routeKey, message.sender.id, event.approval);
-        await this.sendText(target, this.approvals.formatForChannel(pending));
-      } else if (event.type === "turn.completed") {
-        this.state.setSessionStatus(session.id, { type: "idle" });
-      } else if (event.type === "turn.failed") {
-        this.state.setSessionStatus(session.id, { type: "failed", error: event.error });
-        await this.sendText(target, `Codex 执行失败: ${event.error}`);
       }
-    }
-    if (finalText) {
-      await this.sendText(target, finalText);
-      await this.sendExtractedMedia(target, finalText, session.cwd, sentMediaKeys);
-    }
+      if (finalText) {
+        await this.sendText(target, finalText);
+        await this.sendExtractedMedia(target, finalText, session.cwd, sentMediaKeys);
+      }
+    });
   }
 
   private async resumeOrUseSession(
@@ -285,27 +294,56 @@ export class Bridge {
   private async resolveApproval(
     message: ChannelMessage,
     target: ChannelTarget,
-    approvalKey: string | undefined,
+    args: string[],
     decision: ApprovalDecision,
   ): Promise<void> {
-    const key = approvalKey ?? this.approvals.latest(message.routeKey)?.approvalKey;
+    const parsed = this.parseApprovalArgs(message.routeKey, args, decision);
+    const key = parsed.approvalKey ?? this.approvals.latest(message.routeKey)?.approvalKey;
     if (!key) {
       await this.sendText(target, "当前没有待处理审批。");
       return;
     }
     try {
-      const pending = this.approvals.decide(key, message.routeKey, decision);
-      await this.codex.resolveApproval?.(pending.approvalKey, decision);
-      await this.sendText(target, `审批已处理 [${pending.approvalKey}]: ${decision}`);
+      const pending = this.approvals.decide(key, message.routeKey, decision, parsed.reason);
+      await this.codex.resolveApproval?.(pending.approvalKey, decision, parsed.reason);
+      await this.sendText(target, [
+        `审批已处理 [${pending.approvalKey}]: ${decision}`,
+        parsed.reason ? `理由: ${parsed.reason}` : undefined,
+      ].filter(Boolean).join("\n"));
     } catch (error) {
       await this.sendText(target, error instanceof Error ? error.message : String(error));
     }
   }
 
-  private async cancelSession(message: ChannelMessage, target: ChannelTarget): Promise<void> {
+  private parseApprovalArgs(routeKey: string, args: string[], decision: ApprovalDecision): {
+    approvalKey?: string;
+    reason?: string;
+  } {
+    if (args.length === 0) return {};
+    const [first = "", ...rest] = args;
+    const knownApproval = this.approvals.get(first);
+    if (knownApproval?.routeKey === routeKey) {
+      return {
+        approvalKey: first,
+        reason: decision === "deny" ? rest.join(" ").trim() || undefined : undefined,
+      };
+    }
+    if (decision === "deny") {
+      return { reason: args.join(" ").trim() || undefined };
+    }
+    return { approvalKey: first };
+  }
+
+  private async stopCurrentTask(message: ChannelMessage, target: ChannelTarget): Promise<void> {
     const binding = this.state.getBinding(message.routeKey);
     if (!binding) {
       await this.sendText(target, "当前没有活跃 Codex 会话。");
+      return;
+    }
+    const status = await this.codex.getStatus(binding.sessionId);
+    const workerRunning = this.routeWorkers.has(message.routeKey);
+    if (!workerRunning && status.type !== "running" && status.type !== "waiting_approval") {
+      await this.sendText(target, "当前没有正在运行的 Codex 任务。");
       return;
     }
     if (!this.codex.cancel) {
@@ -314,7 +352,8 @@ export class Bridge {
     }
     await this.codex.cancel(binding.sessionId);
     this.state.setSessionStatus(binding.sessionId, { type: "idle" });
-    await this.sendText(target, `已请求取消会话: ${binding.sessionId}`);
+    await this.sendTyping(target, false);
+    await this.sendText(target, `已请求停止当前 Codex 任务\nSession: ${binding.sessionId}`);
   }
 
   private async handleProgressModeCommand(
@@ -384,22 +423,70 @@ export class Bridge {
     await this.sendText(target, fallbackMediaText(media, capabilities.media));
   }
 
+  private async withTyping<T>(target: ChannelTarget, operation: () => Promise<T>): Promise<T> {
+    const capabilities = this.channel.getCapabilities();
+    if (!capabilities.typing || !this.channel.sendTyping) {
+      return operation();
+    }
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      await this.sendTyping(target, true);
+      if (stopped) return;
+      timer = setTimeout(() => {
+        void tick();
+      }, 5000);
+      timer.unref?.();
+    };
+    await tick();
+    try {
+      return await operation();
+    } finally {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      await this.sendTyping(target, false);
+    }
+  }
+
+  private async sendTyping(target: ChannelTarget, typing: boolean): Promise<void> {
+    const capabilities = this.channel.getCapabilities();
+    if (!capabilities.typing || !this.channel.sendTyping) return;
+    try {
+      await this.channel.sendTyping(target, typing);
+    } catch (error) {
+      this.logger.warn("channel typing send failed", {
+        channel: this.channel.id,
+        typing,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private async statusText(routeKey: string): Promise<string> {
     const channelStatus = await this.channel.getStatus();
     const binding = this.state.getBinding(routeKey);
-    const sessionStatus: CodexSessionStatus = binding
+    const localSession = binding ? this.state.getSession(binding.sessionId) : undefined;
+    const adapterStatus: CodexSessionStatus = binding
       ? await this.codex.getStatus(binding.sessionId)
       : { type: "unknown", detail: "no active session" };
+    const sessionStatus: CodexSessionStatus = adapterStatus.type === "unknown" && localSession
+      ? localSession.status
+      : adapterStatus;
     const approvals = this.approvals.list(routeKey);
+    const latestApproval = approvals.at(-1);
+    const workerRunning = this.routeWorkers.has(routeKey);
     return [
       `Bridge: ok`,
       `Channel: ${channelStatus.channelId} ${channelStatus.state}`,
-      `Codex: ${sessionStatus.type}`,
+      `Processing: ${workerRunning ? "yes" : "no"}`,
+      `Codex: ${formatCodexStatus(sessionStatus)}`,
       `Session: ${binding?.sessionId ?? "none"}`,
       `Progress mode: ${this.progressModeFor(routeKey)}`,
-      binding ? `Cwd: ${this.state.getSession(binding.sessionId)?.session.cwd ?? "unknown"}` : undefined,
+      binding ? `Cwd: ${localSession?.session.cwd ?? "unknown"}` : undefined,
       `Queued messages: ${this.routeQueues.get(routeKey)?.length ?? 0}`,
       `Pending approvals: ${approvals.length}`,
+      latestApproval ? `Latest approval: ${latestApproval.approvalKey}` : undefined,
+      workerRunning && binding ? "操作: /stop 终止当前任务" : undefined,
       channelStatus.lastError ? `Last channel error: ${channelStatus.lastError}` : undefined,
     ].filter(Boolean).join("\n");
   }
@@ -471,9 +558,10 @@ export class Bridge {
       "/debug - 查看调试状态",
       "/progress [brief|detailed|silent] - 查看或设置当前上下文进度投递模式",
       "/OK 或 /approve [id] - 批准当前或指定审批",
-      "/NO 或 /deny [id] - 拒绝当前或指定审批",
+      "/NO [理由] 或 /deny [id] [理由] - 拒绝当前或指定审批",
       "/approve-session [id] - 本会话批准当前或指定审批",
-      "/cancel [id] - 取消审批或当前任务",
+      "/stop - 终止当前正在处理的 Codex 任务",
+      "/cancel [id] - 取消审批；无 id 时同 /stop",
     ].join("\n");
   }
 
@@ -507,6 +595,15 @@ function truncateForChannel(text: string, maxLength = 600): string {
 
 function mediaKey(media: ChannelMedia): string | undefined {
   return media.path ?? media.url;
+}
+
+function formatCodexStatus(status: CodexSessionStatus): string {
+  const parts: string[] = [status.type];
+  if ("turnId" in status && status.turnId) parts.push(`turn=${status.turnId}`);
+  if ("task" in status && status.task) parts.push(`task=${truncateForChannel(status.task, 80)}`);
+  if ("detail" in status && status.detail) parts.push(status.detail);
+  if ("error" in status && status.error) parts.push(status.error);
+  return parts.join(" ");
 }
 
 function fallbackMediaText(media: ChannelMedia, mediaCapability: boolean): string {

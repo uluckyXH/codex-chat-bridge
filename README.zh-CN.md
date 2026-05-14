@@ -47,9 +47,9 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 当前 `codex exec --json` 模式会复用 Codex 历史会话，但不会把微信侧交互实时同步到另一个已经打开的 Codex CLI 或 Codex App 窗口。要实现多端实时同屏，需要后续切换到更完整的 Codex app-server/事件订阅方案，或让中间件成为唯一会话入口并提供自己的观察端。
 
-同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/cancel`、审批命令仍会立即处理。当前 exec 模式的“中途输出”来自 `codex exec --json` 可见事件。默认 `brief` 进度模式只投递计划、自言自语、搜索和文件变更摘要，不投递命令/工具细节；需要完整调试信息时可发送 `/progress detailed` 或启动时传 `--progress detailed`。更细的同 turn 插入和 steering 需要后续 app-server adapter。
+同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/stop`、审批命令仍会立即处理。当前 exec 模式的“中途输出”来自 `codex exec --json` 可见事件。默认 `brief` 进度模式只投递计划、自言自语、搜索和文件变更摘要，不投递命令/工具细节；需要完整调试信息时可发送 `/progress detailed` 或启动时传 `--progress detailed`。更细的同 turn 插入和 steering 需要后续 app-server adapter。
 
-微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。`sendmessage` 返回业务错误码时会进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。
+微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。Codex 运行期间，微信通道会通过 `getconfig` 获取 `typing_ticket`，再周期调用 `sendtyping` 维持“对方正在输入中”状态，结束或 `/stop` 后会停止 typing。`sendmessage` 返回业务错误码时会进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。
 
 当 Codex 回复中出现可访问的媒体引用时，中间件会在发送文本后尝试发送媒体消息。图片会识别常见图片后缀；普通文件只从显式引用中提取，例如 Markdown 链接、`MEDIA:`/`FILE:` 指令、`文件:`/`File:` 标签，避免把进度里的代码路径都当附件发送。本地文件必须存在。微信发送图片使用 `image_item`，发送普通文件使用 `file_item`，底层都会走 `getuploadurl` + CDN 上传；如果通道不支持媒体或发送失败，会额外发送一条包含文件位置的文本说明。
 
@@ -57,14 +57,16 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 - `/help`：查看命令。
 - `/new`：为当前微信上下文创建新的 Codex 会话。
-- `/status`：查看 Bridge、微信通道、Codex 状态和当前工作目录。
+- `/status`：查看 Bridge、微信通道、Codex 状态、是否正在处理、队列和当前工作目录。
 - `/sessions`：查看当前微信上下文绑定过的会话。
 - `/sessions all` 或 `/all-sessions`：查看全部可发现 Codex 历史会话 ID。
 - `/resume <session>` / `/use <session>`：恢复并绑定指定 Codex 会话。
 - `/progress [brief|detailed|silent]`：查看或设置当前微信上下文的进度投递模式。
 - `/OK` 或 `/approve [id]`：批准当前或指定 Codex 审批。
-- `/NO` 或 `/deny [id]`：拒绝当前或指定 Codex 审批。
-- `/approve-session [id]`、`/cancel [id]`：本会话批准、取消审批或取消当前任务。
+- `/NO [理由]` 或 `/deny [id] [理由]`：拒绝当前或指定 Codex 审批，并记录拒绝理由。
+- `/approve-session [id]`：本会话批准当前或指定审批。
+- `/stop`：终止当前正在处理的 Codex 任务，不结束 Codex 会话。
+- `/cancel [id]`：取消指定审批；不带 ID 时同 `/stop`。
 
 ## 文档
 

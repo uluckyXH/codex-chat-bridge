@@ -62,9 +62,15 @@ interface ActiveLogin {
   pendingVerifyCode?: string;
 }
 
+interface CachedTypingTicket {
+  ticket: string;
+  expiresAt: number;
+}
+
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const DEFAULT_BOT_TYPE = "3";
 const SESSION_EXPIRED_ERRCODE = -14;
+const TYPING_TICKET_TTL_MS = 20 * 60 * 1000;
 
 export class WeixinAdapter implements ChannelAdapter {
   readonly id = "weixin";
@@ -89,6 +95,7 @@ export class WeixinAdapter implements ChannelAdapter {
   private pollTask?: Promise<void>;
   private outboundQueue: Promise<void> = Promise.resolve();
   private lastOutboundSentAt = 0;
+  private readonly typingTickets = new Map<string, CachedTypingTicket>();
 
   constructor(private readonly options: WeixinAdapterOptions = {}) {
     this.sourceVersion = options.sourceVersion ?? "2.4.3";
@@ -289,6 +296,38 @@ export class WeixinAdapter implements ChannelAdapter {
     };
   }
 
+  async sendTyping(target: ChannelTarget, typing: boolean, _options?: SendOptions): Promise<void> {
+    const account = this.resolveAccount(target.accountId);
+    if (!account) {
+      throw new Error("WeixinAdapter 未登录：请先运行 weixin login");
+    }
+    const toUserId = target.recipient.id || target.conversation.id;
+    if (!toUserId) {
+      throw new Error("WeixinAdapter 无法发送 typing：缺少接收方");
+    }
+    try {
+      const ticket = await this.typingTicket(account, target, toUserId);
+      await this.api.sendTyping({
+        token: account.token,
+        timeoutMs: 10_000,
+        body: {
+          ilink_user_id: toUserId,
+          typing_ticket: ticket,
+          status: typing ? 1 : 2,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.status = {
+        ...this.status,
+        state: "degraded",
+        account: account.accountId,
+        lastError: message,
+      };
+      throw error;
+    }
+  }
+
   hasMessageHandler(): boolean {
     return Boolean(this.handler);
   }
@@ -463,6 +502,34 @@ export class WeixinAdapter implements ChannelAdapter {
   private resolveAccount(accountId = this.accountId): StoredWeixinAccount | undefined {
     if (accountId) return this.store.loadAccount(normalizeWeixinAccountId(accountId));
     return this.store.getDefaultAccount();
+  }
+
+  private async typingTicket(
+    account: StoredWeixinAccount,
+    target: ChannelTarget,
+    toUserId: string,
+  ): Promise<string> {
+    const contextToken = typeof target.context?.contextToken === "string" ? target.context.contextToken : undefined;
+    const cacheKey = [account.accountId, toUserId, contextToken ?? ""].join(":");
+    const cached = this.typingTickets.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.ticket;
+    const config = await this.api.getConfig({
+      token: account.token,
+      timeoutMs: 10_000,
+      body: {
+        ilink_user_id: toUserId,
+        context_token: contextToken,
+      },
+    });
+    const ticket = config.typing_ticket?.trim();
+    if (!ticket) {
+      throw new Error("getconfig response missing typing_ticket");
+    }
+    this.typingTickets.set(cacheKey, {
+      ticket,
+      expiresAt: Date.now() + TYPING_TICKET_TTL_MS,
+    });
+    return ticket;
   }
 
   private async sendRawMessage(account: StoredWeixinAccount, body: WeixinSendMessageRequest): Promise<void> {

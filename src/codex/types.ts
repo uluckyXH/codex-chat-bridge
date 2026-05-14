@@ -56,5 +56,5 @@ export interface CodexAdapter {
   cancel?(sessionId: string): Promise<void>;
   getStatus(sessionId: string): Promise<CodexSessionStatus>;
   listSessions(routeKey?: string): Promise<CodexSessionSummary[]>;
-  resolveApproval?(approvalKey: string, decision: ApprovalDecision): Promise<void>;
+  resolveApproval?(approvalKey: string, decision: ApprovalDecision, reason?: string): Promise<void>;
 }

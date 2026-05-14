@@ -14,11 +14,27 @@ test("ApprovalManager creates and resolves approvals", () => {
 
   assert.equal(pending.status, "pending");
   assert.match(manager.formatForChannel(pending), /\/OK/);
+  assert.match(manager.formatForChannel(pending), /\/NO \[理由]/);
   assert.equal(manager.latest(pending.routeKey)?.approvalKey, pending.approvalKey);
 
   const resolved = manager.decide(pending.approvalKey, pending.routeKey, "approve");
   assert.equal(resolved.status, "resolved");
   assert.equal(resolved.decision, "approve");
+});
+
+test("ApprovalManager stores deny reasons", () => {
+  const manager = new ApprovalManager({ ttlMs: 60_000 });
+  const pending = manager.create("route-a", "user", {
+    kind: "command",
+    sessionId: "s1",
+    turnId: "t1",
+    itemId: "i1",
+  });
+
+  const resolved = manager.decide(pending.approvalKey, pending.routeKey, "deny", "命令太危险");
+
+  assert.equal(resolved.decision, "deny");
+  assert.equal(resolved.decisionReason, "命令太危险");
 });
 
 test("ApprovalManager latest returns the newest pending approval for a route", () => {

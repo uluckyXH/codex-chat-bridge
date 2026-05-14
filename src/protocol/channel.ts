@@ -116,6 +116,7 @@ export interface ChannelAdapter {
   onMessage(handler: ChannelMessageHandler): void;
   sendText(target: ChannelTarget, text: string, options?: SendOptions): Promise<SendResult>;
   sendMedia?(target: ChannelTarget, media: ChannelMedia, options?: SendOptions): Promise<SendResult>;
+  sendTyping?(target: ChannelTarget, typing: boolean, options?: SendOptions): Promise<void>;
 }
 
 export function buildRouteKey(input: {

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import type {
   CodexAdapter,
@@ -25,11 +25,17 @@ interface ExecSessionRecord {
   updatedAt: string;
 }
 
+interface RunningExecProcess {
+  child: ChildProcess;
+  cancelRequested: boolean;
+}
+
 export class ExecCodexAdapter implements CodexAdapter {
   private readonly codexBin: string;
   private readonly runPolicy: CodexRunPolicy;
   private readonly codexHome?: string;
   private readonly sessions = new Map<string, ExecSessionRecord>();
+  private readonly runningProcesses = new Map<string, RunningExecProcess>();
 
   constructor(options: ExecCodexAdapterOptions = {}) {
     this.codexBin = options.codexBin ?? "codex";
@@ -78,7 +84,7 @@ export class ExecCodexAdapter implements CodexAdapter {
     if (!stored) throw new Error(`exec session not found locally: ${sessionId}`);
     const session = stored.session;
     const turnId = `exec-turn-${Date.now()}`;
-    stored.status = { type: "running", turnId };
+    stored.status = { type: "running", turnId, task: truncatePrompt(prompt) };
     stored.updatedAt = new Date().toISOString();
     yield { type: "turn.started", sessionId, turnId };
 
@@ -86,6 +92,11 @@ export class ExecCodexAdapter implements CodexAdapter {
     const child = spawn(this.codexBin, args, {
       cwd: session.cwd,
       stdio: ["ignore", "pipe", "pipe"],
+    });
+    const running: RunningExecProcess = { child, cancelRequested: false };
+    this.runningProcesses.set(sessionId, running);
+    const closePromise = new Promise<number | null>((resolve) => {
+      child.on("close", resolve);
     });
     let finalText = "";
     let stderr = "";
@@ -95,23 +106,32 @@ export class ExecCodexAdapter implements CodexAdapter {
     });
 
     const lines = createInterface({ input: child.stdout });
-    for await (const line of lines) {
-      if (!line.trim()) continue;
-      const parsed = parseExecJsonLine(line, sessionId, turnId);
-      if (parsed?.threadId) {
-        stored.actualThreadId = parsed.threadId;
-        stored.updatedAt = new Date().toISOString();
+    try {
+      for await (const line of lines) {
+        if (!line.trim()) continue;
+        const parsed = parseExecJsonLine(line, sessionId, turnId);
+        if (parsed?.threadId) {
+          stored.actualThreadId = parsed.threadId;
+          stored.updatedAt = new Date().toISOString();
+        }
+        const event = parsed?.event;
+        if (!event) continue;
+        if (event.type === "assistant.completed") finalText = event.text;
+        if (event.type === "turn.failed") stored.status = { type: "failed", error: event.error };
+        yield event;
       }
-      const event = parsed?.event;
-      if (!event) continue;
-      if (event.type === "assistant.completed") finalText = event.text;
-      if (event.type === "turn.failed") stored.status = { type: "failed", error: event.error };
-      yield event;
+    } catch (error) {
+      if (!running.cancelRequested) throw error;
     }
 
-    const code = await new Promise<number | null>((resolve) => {
-      child.on("close", resolve);
-    });
+    const code = await closePromise;
+    this.runningProcesses.delete(sessionId);
+    if (running.cancelRequested) {
+      stored.status = { type: "idle" };
+      stored.updatedAt = new Date().toISOString();
+      yield { type: "turn.completed", sessionId, turnId };
+      return;
+    }
     if (code === 0) {
       stored.status = { type: "idle" };
       stored.updatedAt = new Date().toISOString();
@@ -123,6 +143,27 @@ export class ExecCodexAdapter implements CodexAdapter {
       yield { type: "turn.failed", sessionId, turnId, error };
     }
     void finalText;
+  }
+
+  async cancel(sessionId: string): Promise<void> {
+    const running = this.runningProcesses.get(sessionId);
+    const stored = this.sessions.get(sessionId);
+    if (stored) {
+      stored.status = { type: "idle" };
+      stored.updatedAt = new Date().toISOString();
+    }
+    if (!running) return;
+    running.cancelRequested = true;
+    if (!running.child.kill("SIGTERM")) {
+      running.child.kill("SIGKILL");
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (this.runningProcesses.get(sessionId) === running) {
+        running.child.kill("SIGKILL");
+      }
+    }, 2000);
+    timer.unref?.();
   }
 
   async getStatus(sessionId: string): Promise<CodexSessionStatus> {
@@ -172,9 +213,16 @@ export function parseExecJsonLine(line: string, sessionId: string, turnId: strin
     const parsed = JSON.parse(line) as {
       type?: string;
       thread_id?: string;
+      text?: string;
+      summary?: string;
+      summary_text?: string;
       item?: {
         type?: string;
+        item_type?: string;
         text?: string;
+        summary_text?: string;
+        summary?: Array<{ text?: string } | string>;
+        plan?: Array<{ text?: string; step?: string; status?: string } | string>;
         command?: string;
         aggregated_output?: string;
         status?: string;
@@ -191,7 +239,19 @@ export function parseExecJsonLine(line: string, sessionId: string, turnId: strin
     if (parsed.type === "thread.started" && parsed.thread_id) {
       return { threadId: parsed.thread_id };
     }
-    if (parsed.type === "item.completed" && parsed.item?.type === "agent_message" && parsed.item.text) {
+    if ((parsed.type === "codex_thinking" || parsed.type === "reasoning") && (parsed.text || parsed.summary || parsed.summary_text)) {
+      return {
+        event: {
+          type: "assistant.progress",
+          sessionId,
+          turnId,
+          text: parsed.text ?? parsed.summary ?? parsed.summary_text ?? "",
+          kind: "reasoning",
+        },
+      };
+    }
+    const itemType = parsed.item?.type ?? parsed.item?.item_type;
+    if (parsed.type === "item.completed" && (itemType === "agent_message" || itemType === "assistant_message") && parsed.item?.text) {
       return { event: { type: "assistant.completed", sessionId, turnId, text: parsed.item.text } };
     }
     if ((parsed.type === "item.started" || parsed.type === "item.updated" || parsed.type === "item.completed") && parsed.item) {
@@ -214,7 +274,11 @@ export function parseExecJsonLine(line: string, sessionId: string, turnId: strin
 
 function progressFromExecItem(eventType: string, item: {
   type?: string;
+  item_type?: string;
   text?: string;
+  summary_text?: string;
+  summary?: Array<{ text?: string } | string>;
+  plan?: Array<{ text?: string; step?: string; status?: string } | string>;
   command?: string;
   aggregated_output?: string;
   status?: string;
@@ -225,33 +289,54 @@ function progressFromExecItem(eventType: string, item: {
   tool?: string;
   query?: string;
 }): { text: string; kind: CodexProgressKind } | undefined {
-  if (item.type === "reasoning" && eventType === "item.completed" && item.text) {
-    return { text: item.text, kind: "reasoning" };
+  const itemType = item.type ?? item.item_type;
+  if ((itemType === "reasoning" || itemType === "codex_thinking" || itemType === "thinking") && eventType === "item.completed") {
+    const text = item.text ?? item.summary_text ?? textFromSummary(item.summary);
+    return text ? { text, kind: "reasoning" } : undefined;
   }
-  if (item.type === "command_execution" && eventType === "item.started" && item.command) {
+  if (itemType === "command_execution" && eventType === "item.started" && item.command) {
     return { text: `正在执行命令: ${item.command}`, kind: "command" };
   }
-  if (item.type === "command_execution" && eventType === "item.completed" && item.command) {
+  if (itemType === "command_execution" && eventType === "item.completed" && item.command) {
     const status = item.status === "failed" || item.exit_code ? "失败" : "完成";
     const output = imageOutputHint(item.aggregated_output);
     const text = output ? `命令${status}: ${item.command}\n输出:\n${output}` : `命令${status}: ${item.command}`;
     return { text, kind: "command" };
   }
-  if (item.type === "file_change" && eventType === "item.completed" && item.changes?.length) {
+  if (itemType === "file_change" && eventType === "item.completed" && item.changes?.length) {
     const paths = item.changes.map((change) => change.path).filter(Boolean).slice(0, 5).join(", ");
     return paths ? { text: `文件变更完成: ${paths}`, kind: "file_change" } : undefined;
   }
-  if (item.type === "mcp_tool_call" && eventType === "item.started") {
+  if (itemType === "mcp_tool_call" && eventType === "item.started") {
     return { text: `正在调用工具: ${[item.server, item.tool].filter(Boolean).join("/")}`, kind: "tool" };
   }
-  if (item.type === "web_search" && eventType === "item.started" && item.query) {
+  if (itemType === "web_search" && eventType === "item.started" && item.query) {
     return { text: `正在搜索: ${item.query}`, kind: "search" };
   }
-  if (item.type === "todo_list" && item.items?.length) {
+  if ((itemType === "todo_list" || itemType === "plan_update") && item.items?.length) {
     const active = item.items.find((todo) => !todo.completed)?.text ?? item.items.at(-1)?.text;
     return active ? { text: `计划更新: ${active}`, kind: "todo" } : undefined;
   }
+  if (itemType === "plan_update" && item.plan?.length) {
+    const active = item.plan
+      .map((entry) => typeof entry === "string" ? entry : entry.text ?? entry.step)
+      .filter(Boolean)
+      .at(-1);
+    return active ? { text: `计划更新: ${active}`, kind: "todo" } : undefined;
+  }
+  if (itemType === "plan_update" && item.text) {
+    return { text: `计划更新: ${item.text}`, kind: "todo" };
+  }
   return undefined;
+}
+
+function textFromSummary(summary: Array<{ text?: string } | string> | undefined): string | undefined {
+  const text = summary
+    ?.map((entry) => typeof entry === "string" ? entry : entry.text)
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  return text || undefined;
 }
 
 function imageOutputHint(output: string | undefined, maxLength = 600): string | undefined {
@@ -259,4 +344,10 @@ function imageOutputHint(output: string | undefined, maxLength = 600): string | 
   if (!text || !/\.(?:png|jpe?g|gif|webp|bmp|tiff?|svg)\b/i.test(text)) return undefined;
   if (text.length <= maxLength) return text;
   return text.slice(-maxLength);
+}
+
+function truncatePrompt(prompt: string, maxLength = 120): string {
+  const normalized = prompt.trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
 }

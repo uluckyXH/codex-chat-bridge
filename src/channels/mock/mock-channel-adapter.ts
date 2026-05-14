@@ -26,8 +26,15 @@ export interface SentMockMedia {
   result: SendResult;
 }
 
+export interface SentMockTyping {
+  target: ChannelTarget;
+  typing: boolean;
+  options?: SendOptions;
+}
+
 export interface MockChannelAdapterOptions {
   media?: boolean;
+  typing?: boolean;
 }
 
 export class MockChannelAdapter implements ChannelAdapter {
@@ -35,6 +42,7 @@ export class MockChannelAdapter implements ChannelAdapter {
   readonly label = "Mock Channel";
   readonly sentMessages: SentMockMessage[] = [];
   readonly sentMedia: SentMockMedia[] = [];
+  readonly sentTyping: SentMockTyping[] = [];
   private handler?: ChannelMessageHandler;
   private state: ChannelStatus = { channelId: this.id, state: "stopped" };
 
@@ -61,7 +69,7 @@ export class MockChannelAdapter implements ChannelAdapter {
     return {
       text: true,
       media: this.options.media ?? false,
-      typing: false,
+      typing: this.options.typing ?? false,
       direct: true,
       group: true,
       login: "none",
@@ -94,6 +102,10 @@ export class MockChannelAdapter implements ChannelAdapter {
     this.sentMedia.push({ target, media, options, result });
     this.state = { ...this.state, lastOutboundAt: result.deliveredAt };
     return result;
+  }
+
+  async sendTyping(target: ChannelTarget, typing: boolean, options?: SendOptions): Promise<void> {
+    this.sentTyping.push({ target, typing, options });
   }
 
   async emitText(text: string, options: { senderId?: string; conversationId?: string } = {}): Promise<void> {

@@ -46,7 +46,7 @@ export class ApprovalManager {
     return this.list(routeKey).at(-1);
   }
 
-  decide(approvalKey: string, routeKey: string, decision: ApprovalDecision): PendingApproval {
+  decide(approvalKey: string, routeKey: string, decision: ApprovalDecision, reason?: string): PendingApproval {
     this.expireOld();
     const pending = this.approvals.get(approvalKey);
     if (!pending) {
@@ -60,6 +60,7 @@ export class ApprovalManager {
     }
     pending.status = "resolved";
     pending.decision = decision;
+    pending.decisionReason = reason?.trim() || undefined;
     this.approvals.set(approvalKey, pending);
     return pending;
   }
@@ -79,7 +80,7 @@ export class ApprovalManager {
       "",
       "快捷回复:",
       "/OK 通过当前审批",
-      "/NO 拒绝当前审批",
+      "/NO [理由] 拒绝当前审批",
       "",
       "带 ID 回复:",
       `/approve ${pending.approvalKey}`,
