@@ -237,6 +237,51 @@ test("WeixinAdapter retries temporary ret=-2 sendmessage failures", async () => 
   assert.equal(status.lastError, undefined);
 });
 
+test("WeixinAdapter retries ret=-2 sends without stale context token", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-1",
+    baseUrl: "https://api.example",
+    savedAt: new Date().toISOString(),
+  });
+  const bodies: unknown[] = [];
+  const fetchImpl: FetchLike = async (input, init) => {
+    const url = String(input);
+    if (url.includes("sendmessage")) {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      bodies.push(body);
+      if (body.msg?.context_token) {
+        return jsonResponse({ ret: -2, errcode: 0, errmsg: "temporary send failure" });
+      }
+      return jsonResponse({});
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    pollOnStart: false,
+    outboundMinIntervalMs: 0,
+    outboundMaxRetries: 0,
+    outboundRetryBaseDelayMs: 0,
+    apiOptions: { fetch: fetchImpl },
+  });
+
+  await adapter.sendText({
+    channelId: "weixin",
+    routeKey: "weixin:abc-im-bot:direct:user@im.wechat",
+    accountId: "abc-im-bot",
+    conversation: { id: "user@im.wechat", kind: "direct" },
+    recipient: { id: "user@im.wechat" },
+    context: { contextToken: "stale-ctx" },
+  }, "hello after context fallback");
+
+  assert.equal(bodies.length, 2);
+  assert.equal((bodies[0] as { msg?: { context_token?: string } }).msg?.context_token, "stale-ctx");
+  assert.equal((bodies[1] as { msg?: { context_token?: string } }).msg?.context_token, undefined);
+});
+
 test("WeixinAdapter sends typing state with getconfig typing ticket", async () => {
   const store = new FileWeixinAccountStore(tempStateDir());
   store.saveAccount({

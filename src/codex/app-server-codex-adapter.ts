@@ -893,11 +893,15 @@ function modelInfoFromResponse(
   const model = stringValue(response.model);
   const provider = stringValue(response.modelProvider) ?? stringValue(thread.modelProvider);
   const serviceTier = stringValue(response.serviceTier) ?? null;
-  if (!model && !provider && !serviceTier) return undefined;
+  const reasoningEffort = Object.prototype.hasOwnProperty.call(response, "reasoningEffort")
+    ? stringValue(response.reasoningEffort) ?? null
+    : undefined;
+  if (!model && !provider && !serviceTier && reasoningEffort === undefined) return undefined;
   return {
     ...(model ? { model } : {}),
     ...(provider ? { provider } : {}),
     ...(serviceTier ? { serviceTier } : {}),
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
   };
 }
 
@@ -1003,7 +1007,7 @@ function textFromPlan(params: Record<string, unknown>): string | undefined {
 
 function shouldFlushProgressDraft(text: string): boolean {
   const normalized = text.trim();
-  return normalized.length >= 80 || /[。！？.!?]\s*$/.test(normalized) || normalized.includes("\n");
+  return normalized.length >= 400 || /[。！？.!?]\s*$/.test(normalized) || normalized.includes("\n");
 }
 
 function appServerErrorMessage(params: Record<string, unknown>): string {

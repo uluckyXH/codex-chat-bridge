@@ -569,11 +569,32 @@ export class WeixinAdapter implements ChannelAdapter {
 
   private async sendMessageWithRetry(account: StoredWeixinAccount, body: WeixinSendMessageRequest): Promise<void> {
     let attempt = 0;
+    let requestBody = body;
+    let retriedWithoutContextToken = false;
     while (true) {
       try {
-        await this.api.sendMessage({ token: account.token, body, timeoutMs: this.outboundRequestTimeoutMs });
+        await this.api.sendMessage({ token: account.token, body: requestBody, timeoutMs: this.outboundRequestTimeoutMs });
         return;
       } catch (error) {
+        if (
+          !retriedWithoutContextToken
+          && hasContextToken(requestBody)
+          && attempt >= this.outboundMaxRetries
+          && isContextTokenFallbackSendError(error)
+        ) {
+          retriedWithoutContextToken = true;
+          requestBody = withoutContextToken(requestBody);
+          attempt = 0;
+          const message = error instanceof Error ? error.message : String(error);
+          this.status = {
+            ...this.status,
+            state: "degraded",
+            account: account.accountId,
+            lastError: `sendmessage retry without context_token after: ${message}`,
+            details: this.statusDetails("sendmessage-context-fallback"),
+          };
+          continue;
+        }
         if (attempt >= this.outboundMaxRetries || !isRetryableSendMessageError(error)) {
           throw error;
         }
@@ -631,6 +652,22 @@ function isRetryableSendMessageError(error: unknown): boolean {
     || /errcode=(45009|45011|45047|45048)\b/.test(message)
     || /\b(429|500|502|503|504)\b/.test(message)
     || /rate.?limit|too many|timeout|timed out|ECONNRESET|ETIMEDOUT|fetch failed/i.test(message);
+}
+
+function isContextTokenFallbackSendError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bret=-2\b/.test(message);
+}
+
+function hasContextToken(body: WeixinSendMessageRequest): boolean {
+  return typeof body.msg?.context_token === "string" && body.msg.context_token.length > 0;
+}
+
+function withoutContextToken(body: WeixinSendMessageRequest): WeixinSendMessageRequest {
+  return {
+    ...body,
+    msg: body.msg ? { ...body.msg, context_token: undefined } : undefined,
+  };
 }
 
 function retryDelayMs(baseDelayMs: number, attempt: number): number {

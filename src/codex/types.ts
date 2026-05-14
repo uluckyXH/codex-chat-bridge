@@ -28,6 +28,7 @@ export interface CodexSessionModelInfo {
   model?: string;
   provider?: string;
   serviceTier?: string | null;
+  reasoningEffort?: string | null;
 }
 
 export type CodexSessionBaseStatus =

@@ -93,7 +93,7 @@ class ContextUsageCodexAdapter extends MockCodexAdapter {
 
   override async getStatus(sessionId: string): Promise<CodexSessionStatus> {
     const status = await super.getStatus(sessionId);
-    return { ...status, context: this.context, model: { model: "gpt-test", provider: "openai", serviceTier: "default" } };
+    return { ...status, context: this.context, model: { model: "gpt-test", provider: "openai", serviceTier: "default", reasoningEffort: "high" } };
   }
 }
 
@@ -278,8 +278,9 @@ test("Bridge status includes session token context without channel identity deta
   const statusMessage = channel.sentMessages.at(-1)?.text ?? "";
   assert.match(statusMessage, /\*\*Codex 状态\*\*/);
   assert.match(statusMessage, /Session: `mock-codex-1`/);
-  assert.match(statusMessage, /Model: `gpt-test` provider=`openai` tier=`default`/);
+  assert.match(statusMessage, /Model: `gpt-test` provider=`openai` tier=`default` effort=`high`/);
   assert.match(statusMessage, /Context: `164,171 \/ 258,400 tokens` \(63\.5%, remaining 94,229\)/);
+  assert.match(statusMessage, /last turn input 160,000, cached 120,000, output 4,171, reasoning output 1,200/);
   assert.match(statusMessage, /total usage `34,375,973 tokens`/);
   assert.doesNotMatch(statusMessage, /13303\.4%/);
   assert.doesNotMatch(statusMessage, /mock:mock-account:direct:project-room/);

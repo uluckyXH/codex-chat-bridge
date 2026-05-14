@@ -57,12 +57,12 @@ rl.on("line", (line) => {
       return;
     }
     threadId = "thread-app-server-" + threadSequence++;
-    send({ id: message.id, result: { thread: thread(message.params.cwd), cwd: message.params.cwd, model: "fake", modelProvider: "openai", serviceTier: null, instructionSources: [], approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [message.params.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null } });
+    send({ id: message.id, result: { thread: thread(message.params.cwd), cwd: message.params.cwd, model: "fake", modelProvider: "openai", serviceTier: null, instructionSources: [], approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [message.params.cwd], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: "medium" } });
     return;
   }
   if (message.method === "thread/resume") {
     threadId = message.params.threadId;
-    send({ id: message.id, result: { thread: thread(process.cwd()), cwd: process.cwd(), model: "fake", modelProvider: "openai", serviceTier: null, instructionSources: [], approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: null } });
+    send({ id: message.id, result: { thread: thread(process.cwd()), cwd: process.cwd(), model: "fake", modelProvider: "openai", serviceTier: null, instructionSources: [], approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: "medium" } });
     return;
   }
   if (message.method === "turn/start") {
@@ -310,6 +310,7 @@ test("AppServerCodexAdapter records thread token usage updates", async () => {
   assert.equal(status.context?.modelContextWindow, 200000);
   assert.equal(status.model?.model, "fake");
   assert.equal(status.model?.provider, "openai");
+  assert.equal(status.model?.reasoningEffort, "medium");
 });
 
 test("AppServerCodexAdapter keeps network available in approval workspace sandbox", async () => {
@@ -368,9 +369,9 @@ test("AppServerCodexAdapter does not duplicate chunked commentary on completion"
   const progressTexts = events
     .filter((event) => event.type === "assistant.progress" && event.kind === "other")
     .map((event) => event.type === "assistant.progress" ? event.text : "");
-  assert.ok(progressTexts.some((text) => text.includes("第一段内容")));
-  assert.ok(progressTexts.some((text) => text.includes("第二段")));
-  assert.equal(progressTexts.filter((text) => text.includes("第一段内容")).length, 1);
+  assert.equal(progressTexts.length, 1);
+  assert.ok(progressTexts[0].includes("第一段内容"));
+  assert.ok(progressTexts[0].includes("第二段"));
   assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "commentary chunks final"));
   assert.equal(events.some((event) => event.type === "assistant.completed" && event.text.includes("第一段内容")), false);
 });

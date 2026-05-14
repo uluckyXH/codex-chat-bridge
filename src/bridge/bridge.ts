@@ -776,17 +776,18 @@ function formatContextUsage(context: CodexSessionContextUsage | undefined): stri
     : `\`${formatNumber(current)} tokens\``;
   return [
     usage,
-    `(last input ${formatNumber(context.last.inputTokens)}, cached ${formatNumber(context.last.cachedInputTokens)}, output ${formatNumber(context.last.outputTokens)}, reasoning ${formatNumber(context.last.reasoningOutputTokens)})`,
+    `(last turn input ${formatNumber(context.last.inputTokens)}, cached ${formatNumber(context.last.cachedInputTokens)}, output ${formatNumber(context.last.outputTokens)}, reasoning output ${formatNumber(context.last.reasoningOutputTokens)})`,
     `total usage \`${formatNumber(context.total.totalTokens)} tokens\``,
   ].join(" ");
 }
 
 function formatModelInfo(model: CodexSessionModelInfo | undefined): string {
-  if (!model?.model && !model?.provider && !model?.serviceTier) return "`unknown`";
+  if (!model?.model && !model?.provider && !model?.serviceTier && model?.reasoningEffort === undefined) return "`unknown`";
   const parts = [
     model.model ? `\`${model.model}\`` : undefined,
     model.provider ? `provider=\`${model.provider}\`` : undefined,
     model.serviceTier ? `tier=\`${model.serviceTier}\`` : undefined,
+    model.reasoningEffort !== undefined ? `effort=\`${model.reasoningEffort ?? "default"}\`` : undefined,
   ].filter(Boolean);
   return parts.join(" ");
 }

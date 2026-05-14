@@ -770,7 +770,7 @@ Status: idle
 
 - Bridge Core 状态。
 - Channel Adapter 状态。
-- Codex Adapter 状态，包括模型信息，以及 app-server `thread/tokenUsage/updated` 提供的 token 用量。`tokenUsage.total` 是累计用量，不能当作当前上下文窗口占用；`/status` 用 `tokenUsage.last` 近似当前窗口，并把累计量单独展示为 `total usage`。
+- Codex Adapter 状态，包括模型信息、reasoning effort，以及 app-server `thread/tokenUsage/updated` 提供的 token 用量。`tokenUsage.total` 是累计用量，不能当作当前上下文窗口占用；`/status` 用 `tokenUsage.last` 近似当前窗口，并把累计量单独展示为 `total usage`。`last turn output` 是最近一次 token usage 更新里的输出 token，不是会话累计输出。
 
 普通用户输出：
 
@@ -778,8 +778,8 @@ Status: idle
 **Codex 状态**
 - Session: `cdx-8f2a`
 - State: `running turn=exec-turn-123 task=修复测试`
-- Model: `gpt-5.1-codex` provider=`openai`
-- Context: `164,171 / 258,400 tokens` (63.5%, remaining 94,229) (last input 160,000, cached 120,000, output 4,171, reasoning 1,200) total usage `34,375,973 tokens`
+- Model: `gpt-5.1-codex` provider=`openai` effort=`medium`
+- Context: `164,171 / 258,400 tokens` (63.5%, remaining 94,229) (last turn input 160,000, cached 120,000, output 4,171, reasoning output 1,200) total usage `34,375,973 tokens`
 - Cwd: `/path/to/project`
 
 **Bridge**
@@ -801,8 +801,8 @@ Status: idle
 **Codex 状态**
 - Session: `cdx-8f2a`
 - State: `running`
-- Model: `gpt-5.1-codex` provider=`openai`
-- Context: `164,171 / 258,400 tokens` (63.5%, remaining 94,229) (last input 160,000, cached 120,000, output 4,171, reasoning 1,200) total usage `34,375,973 tokens`
+- Model: `gpt-5.1-codex` provider=`openai` effort=`medium`
+- Context: `164,171 / 258,400 tokens` (63.5%, remaining 94,229) (last turn input 160,000, cached 120,000, output 4,171, reasoning output 1,200) total usage `34,375,973 tokens`
 - Cwd: `/path/to/project`
 
 **Bridge**
