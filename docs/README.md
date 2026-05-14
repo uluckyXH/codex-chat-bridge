@@ -16,6 +16,9 @@
 - `git-management.zh-CN.md`
   中文 Git 管理规范。说明仓库边界、忽略规则、本地参考仓库和提交要求。
 
+- `weixin-ret2-context-token.zh-CN.md`
+  微信 `sendmessage ret=-2` 与 `context_token` 问题说明。包含大白话解释、专业排障判断、现有缓解策略和后续优化方向。
+
 - `requirements.md`
   早期英文需求草稿。保留作参考，不作为当前主设计依据。
 
