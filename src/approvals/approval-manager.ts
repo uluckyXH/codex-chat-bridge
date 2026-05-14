@@ -42,6 +42,10 @@ export class ApprovalManager {
     return this.approvals.get(approvalKey);
   }
 
+  latest(routeKey: string): PendingApproval | undefined {
+    return this.list(routeKey).at(-1);
+  }
+
   decide(approvalKey: string, routeKey: string, decision: ApprovalDecision): PendingApproval {
     this.expireOld();
     const pending = this.approvals.get(approvalKey);
@@ -73,7 +77,11 @@ export class ApprovalManager {
     if (pending.risk) lines.push(`风险: ${pending.risk}`);
     lines.push(
       "",
-      "回复:",
+      "快捷回复:",
+      "/OK 通过当前审批",
+      "/NO 拒绝当前审批",
+      "",
+      "带 ID 回复:",
       `/approve ${pending.approvalKey}`,
       `/approve-session ${pending.approvalKey}`,
       `/deny ${pending.approvalKey}`,

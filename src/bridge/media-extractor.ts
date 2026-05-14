@@ -13,17 +13,41 @@ const EXTENSION_MIME: Record<string, string> = {
   ".tif": "image/tiff",
   ".tiff": "image/tiff",
   ".svg": "image/svg+xml",
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".xml": "application/xml",
+  ".log": "text/plain",
+  ".rtf": "application/rtf",
+  ".zip": "application/zip",
+  ".tar": "application/x-tar",
+  ".gz": "application/gzip",
+  ".tgz": "application/gzip",
+  ".7z": "application/x-7z-compressed",
+  ".rar": "application/vnd.rar",
 };
 
 interface MediaCandidate {
   value: string;
   caption?: string;
+  explicit?: boolean;
 }
 
 export function extractMediaRefs(text: string, cwd = process.cwd()): ChannelMedia[] {
   const candidates = [
-    ...markdownImageRefs(text),
+    ...markdownMediaRefs(text),
     ...mediaDirectiveRefs(text),
+    ...labeledFileRefs(text),
     ...bareImageRefs(text),
   ];
   const media: ChannelMedia[] = [];
@@ -40,27 +64,43 @@ export function extractMediaRefs(text: string, cwd = process.cwd()): ChannelMedi
 }
 
 export function extractLocalImageMedia(text: string, cwd: string): ChannelMedia[] {
-  return extractMediaRefs(text, cwd).filter((media) => Boolean(media.path));
+  return extractMediaRefs(text, cwd).filter((media) => media.type === "image" && Boolean(media.path));
 }
 
-function markdownImageRefs(text: string): MediaCandidate[] {
+function markdownMediaRefs(text: string): MediaCandidate[] {
   const refs: MediaCandidate[] = [];
-  const pattern = /!\[([^\]]*)]\(\s*(<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\s*\)/g;
+  const pattern = /(!?)\[([^\]]*)]\(\s*(<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\s*\)/g;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
-    const cleaned = cleanRef(match[2]);
-    if (cleaned) refs.push({ value: cleaned, caption: match[1]?.trim() || undefined });
+    const cleaned = cleanRef(match[3]);
+    if (cleaned) refs.push({
+      value: cleaned,
+      caption: match[2]?.trim() || undefined,
+      explicit: match[1] !== "!",
+    });
   }
   return refs;
 }
 
 function mediaDirectiveRefs(text: string): MediaCandidate[] {
   const refs: MediaCandidate[] = [];
-  const pattern = /^\s*MEDIA\s*:\s*(.+?)\s*$/gim;
+  const pattern = /^\s*(?:MEDIA|FILE)\s*:\s*(.+?)\s*$/gim;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     const cleaned = cleanRef(match[1]);
-    if (cleaned) refs.push({ value: cleaned });
+    if (cleaned) refs.push({ value: cleaned, explicit: true });
+  }
+  return refs;
+}
+
+function labeledFileRefs(text: string): MediaCandidate[] {
+  const refs: MediaCandidate[] = [];
+  const extensionPattern = "pdf|docx?|xlsx?|pptx?|txt|md|csv|json|html?|xml|log|rtf|zip|tar|gz|tgz|7z|rar";
+  const pattern = new RegExp(`(?:文件|附件|下载|File|Attachment|Download)\\s*[:：]\\s*(<[^>]+>|[^\\s"'<>]+?\\.(?:${extensionPattern})\\b)`, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const cleaned = cleanRef(match[1]);
+    if (cleaned) refs.push({ value: cleaned, explicit: true });
   }
   return refs;
 }
@@ -106,15 +146,16 @@ function mediaFromCandidate(candidate: MediaCandidate, cwd: string): ChannelMedi
   const filePath = resolveMediaPath(candidate.value, cwd);
   if (!filePath) return undefined;
   const ext = path.extname(filePath).toLowerCase();
-  if (!IMAGE_EXTENSIONS.has(ext)) return undefined;
+  const isImage = IMAGE_EXTENSIONS.has(ext);
+  if (!isImage && !candidate.explicit) return undefined;
   try {
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) return undefined;
     return {
-      type: "image",
+      type: isImage ? "image" : "file",
       path: filePath,
       name: path.basename(filePath),
-      mimeType: EXTENSION_MIME[ext],
+      mimeType: EXTENSION_MIME[ext] ?? "application/octet-stream",
       sizeBytes: stat.size,
       caption: candidate.caption,
     };
@@ -127,12 +168,13 @@ function remoteMediaFromUrl(candidate: MediaCandidate): ChannelMedia | undefined
   try {
     const url = new URL(candidate.value);
     const ext = path.extname(url.pathname).toLowerCase();
-    if (!IMAGE_EXTENSIONS.has(ext)) return undefined;
+    const isImage = IMAGE_EXTENSIONS.has(ext);
+    if (!isImage && !candidate.explicit) return undefined;
     return {
-      type: "image",
+      type: isImage ? "image" : "file",
       url: url.toString(),
       name: decodeURIComponent(path.basename(url.pathname)),
-      mimeType: EXTENSION_MIME[ext],
+      mimeType: EXTENSION_MIME[ext] ?? "application/octet-stream",
       caption: candidate.caption,
     };
   } catch {

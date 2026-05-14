@@ -224,6 +224,64 @@ test("WeixinAdapter uploads and sends image media with caption", async () => {
   assert.equal(result.channelId, "weixin");
 });
 
+test("WeixinAdapter uploads and sends file attachments", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-1",
+    baseUrl: "https://api.example",
+    cdnBaseUrl: "https://cdn.example/c2c",
+    savedAt: new Date().toISOString(),
+  });
+  const filePath = path.join(tempStateDir(), "report.pdf");
+  fs.writeFileSync(filePath, Buffer.from("report"));
+  const calls: Array<{ url: string; body?: unknown }> = [];
+  const fetchImpl: FetchLike = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, body: init?.body });
+    if (url.includes("getuploadurl")) return jsonResponse({ upload_full_url: "https://cdn.example/file-upload" });
+    if (url === "https://cdn.example/file-upload") {
+      return new Response("", {
+        status: 200,
+        headers: { "x-encrypted-param": "download-file-param" },
+      });
+    }
+    if (url.includes("sendmessage")) return jsonResponse({});
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    pollOnStart: false,
+    outboundMinIntervalMs: 0,
+    apiOptions: { fetch: fetchImpl },
+  });
+
+  await adapter.sendMedia({
+    channelId: "weixin",
+    routeKey: "weixin:abc-im-bot:direct:user@im.wechat",
+    accountId: "abc-im-bot",
+    conversation: { id: "user@im.wechat", kind: "direct" },
+    recipient: { id: "user@im.wechat" },
+  }, {
+    type: "file",
+    path: filePath,
+    name: "report.pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 6,
+  });
+
+  const uploadBody = JSON.parse(String(calls.find((call) => call.url.includes("getuploadurl"))?.body));
+  assert.equal(uploadBody.media_type, 3);
+  assert.equal(uploadBody.rawsize, 6);
+  const sendBody = JSON.parse(String(calls.find((call) => call.url.includes("sendmessage"))?.body));
+  const fileItem = sendBody.msg.item_list[0];
+  assert.equal(fileItem.type, 4);
+  assert.equal(fileItem.file_item.file_name, "report.pdf");
+  assert.equal(fileItem.file_item.len, "6");
+  assert.equal(fileItem.file_item.media.encrypt_query_param, "download-file-param");
+});
+
 test("WeixinAdapter submits verify code when QR login requires pairing code", async () => {
   const store = new FileWeixinAccountStore(tempStateDir());
   const statusUrls: string[] = [];

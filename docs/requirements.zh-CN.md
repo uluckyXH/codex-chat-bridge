@@ -16,7 +16,7 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 
 - 处理 Codex 会话、事件、审批和状态。
 - 处理微信登录、收消息、发消息和通道状态。
-- 处理 `/new`、`/status`、`/approve`、`/deny`、`/cancel` 等微信命令。
+- 处理 `/new`、`/status`、`/OK`、`/NO`、`/approve`、`/deny`、`/cancel` 等微信命令。
 - 记录结构化日志和持久化状态。
 - 以终端命令形式启动和运行，保持轻量，不引入重框架。
 
@@ -91,7 +91,7 @@ Git 管理要求：
 - Bridge Core 只能依赖通用渠道协议，不能直接依赖 `openclaw-weixin` 的原始类型。
 - `WeixinAdapter` 只是通用渠道协议的一个实现。
 - 后续 Telegram、企业微信、飞书、Slack、HTTP webhook 等渠道应能通过实现同一套 adapter contract 接入。
-- `/new`、`/status`、`/approve`、`/deny`、`/cancel` 等命令逻辑必须在 Bridge Core/Command Router 中实现，不写进某个具体渠道 adapter。
+- `/new`、`/status`、`/OK`、`/NO`、`/approve`、`/deny`、`/cancel` 等命令逻辑必须在 Bridge Core/Command Router 中实现，不写进某个具体渠道 adapter。
 - 渠道 adapter 只负责登录、连接、收消息、发消息、能力声明和状态上报。
 - 不同渠道的用户、群、线程等上下文必须归一化为统一 route key。
 
@@ -127,8 +127,8 @@ Git 管理要求：
 - 能把 Codex 的回复发送回对应微信会话。
 - 能区分不同微信用户或不同微信群上下文。
 - 能维护微信会话与 Codex 会话之间的绑定关系。
-- 第一阶段优先支持文本消息。
-- 后续预留图片、语音、文件等媒体消息的扩展空间。
+- 第一阶段优先支持文本消息，并支持 Codex 输出中的图片和显式文件附件转发。
+- 后续继续预留语音、视频等媒体消息的扩展空间。
 
 ### 3.2 Codex 会话接入
 
@@ -205,10 +205,10 @@ Git 管理要求：
 - `/debug`：管理员诊断命令，输出更详细的通道、状态和错误信息。
 - `/config`：管理员查看当前非敏感配置。
 - `/whoami`：查看当前微信上下文识别结果和权限角色。
-- `/approve <id>`：批准指定 Codex 操作。
-- `/approve-session <id>`：本会话内批准同类操作。
-- `/deny <id>`：拒绝指定 Codex 操作，但让 Codex 尝试继续。
-- `/reject <id>`：同 `/deny <id>`。
+- `/OK` 或 `/approve [id]`：批准当前或指定 Codex 操作。
+- `/approve-session [id]`：本会话内批准当前或指定同类操作。
+- `/NO` 或 `/deny [id]`：拒绝当前或指定 Codex 操作，但让 Codex 尝试继续。
+- `/reject [id]`：同 `/deny [id]`。
 - `/cancel <id>`：拒绝指定操作，并中断当前 Codex turn。
 
 命令设计要求：
@@ -244,10 +244,12 @@ Git 管理要求：
 
 微信侧决策命令：
 
-- `/approve <id>`：批准一次。
-- `/approve-session <id>`：本 Codex 会话内批准同类操作。
-- `/deny <id>`：拒绝一次，让 Codex 尝试继续。
+- `/OK` 或 `/approve [id]`：批准当前或指定审批一次。
+- `/approve-session [id]`：本 Codex 会话内批准当前或指定同类操作。
+- `/NO` 或 `/deny [id]`：拒绝当前或指定审批一次，让 Codex 尝试继续。
 - `/cancel <id>`：拒绝并中断当前 turn。
+
+无 ID 的审批命令只处理当前微信上下文最新的 pending approval；多个审批并存时，用户仍可用带 ID 命令精确选择。
 
 安全要求：
 

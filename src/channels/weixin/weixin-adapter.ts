@@ -24,6 +24,7 @@ import {
 } from "./weixin-types.js";
 import {
   DEFAULT_WEIXIN_CDN_BASE_URL,
+  buildWeixinFileItem,
   buildWeixinImageItem,
   materializeChannelMedia,
   mediaTypeForPath,
@@ -255,18 +256,16 @@ export class WeixinAdapter implements ChannelAdapter {
   }
 
   async sendMedia(target: ChannelTarget, media: ChannelMedia, _options?: SendOptions): Promise<SendResult> {
-    if (media.type !== "image") {
-      throw new Error(`WeixinAdapter 当前只支持图片媒体发送: ${media.type}`);
+    if (media.type !== "image" && media.type !== "file") {
+      throw new Error(`WeixinAdapter 当前只支持图片和文件媒体发送: ${media.type}`);
     }
     const account = this.resolveAccount(target.accountId);
     if (!account) {
       throw new Error("WeixinAdapter 未登录：请先运行 weixin login");
     }
     const filePath = await materializeChannelMedia({ media, api: this.api });
-    const uploadMediaType = mediaTypeForPath(filePath);
-    if (uploadMediaType !== "IMAGE") {
-      throw new Error(`WeixinAdapter 当前只支持图片媒体发送: ${filePath}`);
-    }
+    const uploadMediaType = media.type === "file" ? "FILE" : mediaTypeForPath(filePath);
+    if (uploadMediaType === "VIDEO") throw new Error(`WeixinAdapter 当前不支持视频媒体发送: ${filePath}`);
     const toUserId = target.recipient.id || target.conversation.id;
     const uploaded = await uploadLocalMediaToWeixin({
       api: this.api,
@@ -279,7 +278,9 @@ export class WeixinAdapter implements ChannelAdapter {
     const items: WeixinMessageItem[] = [];
     const caption = media.caption?.trim();
     if (caption) items.push({ type: WeixinMessageItemType.TEXT, text_item: { text: caption } });
-    items.push(buildWeixinImageItem(uploaded));
+    items.push(uploadMediaType === "IMAGE"
+      ? buildWeixinImageItem(uploaded)
+      : buildWeixinFileItem(uploaded, media.name ?? pathBasename(filePath)));
 
     const result = await this.sendItems(target, account, items);
     return {
@@ -546,4 +547,9 @@ function textFromWeixinMessage(raw: WeixinMessage): string | undefined {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pathBasename(filePath: string): string {
+  const parts = filePath.split(/[\\/]/);
+  return parts.at(-1) || "file";
 }

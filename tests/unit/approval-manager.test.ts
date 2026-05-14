@@ -13,11 +13,37 @@ test("ApprovalManager creates and resolves approvals", () => {
   });
 
   assert.equal(pending.status, "pending");
-  assert.match(manager.formatForChannel(pending), /\/approve/);
+  assert.match(manager.formatForChannel(pending), /\/OK/);
+  assert.equal(manager.latest(pending.routeKey)?.approvalKey, pending.approvalKey);
 
   const resolved = manager.decide(pending.approvalKey, pending.routeKey, "approve");
   assert.equal(resolved.status, "resolved");
   assert.equal(resolved.decision, "approve");
+});
+
+test("ApprovalManager latest returns the newest pending approval for a route", () => {
+  const manager = new ApprovalManager({ ttlMs: 60_000 });
+  const first = manager.create("route-a", "user", {
+    kind: "command",
+    sessionId: "s1",
+    turnId: "t1",
+    itemId: "i1",
+  });
+  const second = manager.create("route-a", "user", {
+    kind: "command",
+    sessionId: "s1",
+    turnId: "t1",
+    itemId: "i2",
+  });
+  manager.create("route-b", "user", {
+    kind: "command",
+    sessionId: "s1",
+    turnId: "t1",
+    itemId: "i3",
+  });
+
+  assert.notEqual(first.approvalKey, second.approvalKey);
+  assert.equal(manager.latest("route-a")?.approvalKey, second.approvalKey);
 });
 
 test("ApprovalManager rejects wrong route decisions", () => {

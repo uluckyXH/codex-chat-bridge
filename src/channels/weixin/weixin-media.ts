@@ -21,8 +21,27 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   ".mp4": "video/mp4",
   ".mov": "video/quicktime",
   ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".xml": "application/xml",
+  ".log": "text/plain",
+  ".rtf": "application/rtf",
   ".zip": "application/zip",
+  ".tar": "application/x-tar",
+  ".gz": "application/gzip",
+  ".tgz": "application/gzip",
+  ".7z": "application/x-7z-compressed",
+  ".rar": "application/vnd.rar",
 };
 
 const MIME_TO_EXTENSION: Record<string, string> = {
@@ -37,8 +56,24 @@ const MIME_TO_EXTENSION: Record<string, string> = {
   "video/mp4": ".mp4",
   "video/quicktime": ".mov",
   "application/pdf": ".pdf",
+  "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.ms-powerpoint": ".ppt",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
   "text/plain": ".txt",
+  "text/markdown": ".md",
+  "text/csv": ".csv",
+  "application/json": ".json",
+  "text/html": ".html",
+  "application/xml": ".xml",
+  "application/rtf": ".rtf",
   "application/zip": ".zip",
+  "application/x-tar": ".tar",
+  "application/gzip": ".gz",
+  "application/x-7z-compressed": ".7z",
+  "application/vnd.rar": ".rar",
 };
 
 export interface UploadedWeixinMedia {
@@ -124,6 +159,21 @@ export function buildWeixinImageItem(uploaded: UploadedWeixinMedia): WeixinMessa
         encrypt_type: 1,
       },
       mid_size: uploaded.fileSizeCiphertext,
+    },
+  };
+}
+
+export function buildWeixinFileItem(uploaded: UploadedWeixinMedia, fileName: string): WeixinMessageItem {
+  return {
+    type: WeixinMessageItemType.FILE,
+    file_item: {
+      media: {
+        encrypt_query_param: uploaded.downloadEncryptedQueryParam,
+        aes_key: Buffer.from(uploaded.aeskey).toString("base64"),
+        encrypt_type: 1,
+      },
+      file_name: fileName,
+      len: String(uploaded.fileSize),
     },
   };
 }

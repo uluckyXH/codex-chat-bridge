@@ -52,3 +52,25 @@ test("extractMediaRefs keeps remote markdown image URLs as media URLs", () => {
   assert.equal(media[0].mimeType, "image/png");
   assert.equal(media[0].caption, "chart");
 });
+
+test("extractMediaRefs extracts explicit file attachments without treating bare code paths as files", () => {
+  const root = tempDir();
+  const reportPath = path.join(root, "report.pdf");
+  const dataPath = path.join(root, "data.json");
+  const sourcePath = path.join(root, "src", "index.ts");
+  fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+  fs.writeFileSync(reportPath, "pdf");
+  fs.writeFileSync(dataPath, "{}");
+  fs.writeFileSync(sourcePath, "console.log('not an attachment');");
+
+  const media = extractMediaRefs([
+    `报告：[最终报告](./report.pdf)`,
+    `FILE:${dataPath}`,
+    "普通文件变更摘要: src/index.ts",
+  ].join("\n"), root);
+
+  assert.deepEqual(media.map((item) => ({ type: item.type, path: item.path, mimeType: item.mimeType, caption: item.caption })), [
+    { type: "file", path: reportPath, mimeType: "application/pdf", caption: "最终报告" },
+    { type: "file", path: dataPath, mimeType: "application/json", caption: undefined },
+  ]);
+});

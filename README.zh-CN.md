@@ -51,7 +51,7 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。`sendmessage` 返回业务错误码时会进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。
 
-当 Codex 回复中出现可访问的图片引用时，中间件会在发送文本后尝试发送媒体消息。当前识别 `.png`、`.jpg/.jpeg`、`.gif`、`.webp`、`.bmp`、`.tif/.tiff`、`.svg`；本地文件必须存在。微信发送图片使用 `getuploadurl` + CDN 上传 + `image_item`；如果通道不支持媒体或发送失败，会额外发送一条包含图片位置的文本说明。
+当 Codex 回复中出现可访问的媒体引用时，中间件会在发送文本后尝试发送媒体消息。图片会识别常见图片后缀；普通文件只从显式引用中提取，例如 Markdown 链接、`MEDIA:`/`FILE:` 指令、`文件:`/`File:` 标签，避免把进度里的代码路径都当附件发送。本地文件必须存在。微信发送图片使用 `image_item`，发送普通文件使用 `file_item`，底层都会走 `getuploadurl` + CDN 上传；如果通道不支持媒体或发送失败，会额外发送一条包含文件位置的文本说明。
 
 ## 微信侧命令
 
@@ -62,7 +62,9 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 - `/sessions all` 或 `/all-sessions`：查看全部可发现 Codex 历史会话 ID。
 - `/resume <session>` / `/use <session>`：恢复并绑定指定 Codex 会话。
 - `/progress [brief|detailed|silent]`：查看或设置当前微信上下文的进度投递模式。
-- `/approve <id>`、`/approve-session <id>`、`/deny <id>`、`/cancel [id]`：处理 Codex 审批或取消当前任务。
+- `/OK` 或 `/approve [id]`：批准当前或指定 Codex 审批。
+- `/NO` 或 `/deny [id]`：拒绝当前或指定 Codex 审批。
+- `/approve-session [id]`、`/cancel [id]`：本会话批准、取消审批或取消当前任务。
 
 ## 文档
 

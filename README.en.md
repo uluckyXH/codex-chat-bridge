@@ -51,7 +51,7 @@ Normal messages from the same channel context are processed sequentially. If Cod
 
 Weixin outbound messages are serialized with a small interval to reduce dropped or hidden rapid-fire progress messages. If `sendmessage` returns a business error code, the channel enters `degraded` state and records `lastError` instead of logging the request as a successful OUT.
 
-When Codex output contains an accessible image reference, the bridge sends the text first and then attempts a media message. It currently recognizes `.png`, `.jpg/.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif/.tiff`, and `.svg`; local files must exist. Weixin image send uses `getuploadurl`, CDN upload, and `image_item`; unsupported channels or failed media sends get a text fallback with the image location.
+When Codex output contains an accessible media reference, the bridge sends the text first and then attempts a media message. Images are detected from common image suffixes. Regular files are extracted only from explicit references such as Markdown links, `MEDIA:`/`FILE:` directives, and `File:`/`Attachment:` labels, so code paths in progress summaries are not sent as attachments. Local files must exist. Weixin sends images as `image_item` and regular files as `file_item`; both use `getuploadurl` plus CDN upload. Unsupported channels or failed media sends get a text fallback with the file location.
 
 ## Channel Commands
 
@@ -62,7 +62,9 @@ When Codex output contains an accessible image reference, the bridge sends the t
 - `/sessions all` or `/all-sessions`: list all discoverable Codex history session IDs.
 - `/resume <session>` / `/use <session>`: resume and bind a Codex session.
 - `/progress [brief|detailed|silent]`: show or set progress delivery mode for the current channel context.
-- `/approve <id>`, `/approve-session <id>`, `/deny <id>`, `/cancel [id]`: handle Codex approvals or cancel the current task.
+- `/OK` or `/approve [id]`: approve the current or specified Codex approval.
+- `/NO` or `/deny [id]`: deny the current or specified Codex approval.
+- `/approve-session [id]`, `/cancel [id]`: approve for the session, cancel an approval, or cancel the current task.
 
 ## Documentation
 

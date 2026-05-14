@@ -61,7 +61,7 @@ test("Bridge handles new session, prompt, status, and approval over mock channel
   const approvalKey = approvalMessage.text.match(/\[(a[0-9a-z]+)\]/)?.[1];
   assert.ok(approvalKey, "approval key should be present");
 
-  await channel.emitText(`/approve ${approvalKey}`);
+  await channel.emitText("/OK");
   await bridge.waitForIdle();
   await bridge.stop();
 
@@ -93,6 +93,25 @@ test("Bridge exposes all sessions command for channel users", async () => {
   assert.equal(allSessionsMessages.length, 2);
   assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-1")));
   assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-2")));
+});
+
+test("Bridge rejects latest approval with /NO without requiring an approval id", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("请触发审批 approval");
+  await bridge.waitForIdle();
+  const approvalMessage = channel.sentMessages.find((message) => message.text.includes("Codex 请求审批"));
+  const approvalKey = approvalMessage?.text.match(/\[(a[0-9a-z]+)\]/)?.[1];
+  assert.ok(approvalKey);
+
+  await channel.emitText("/NO");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.deepEqual(codex.resolvedApprovals, [{ approvalKey, decision: "deny" }]);
 });
 
 test("Bridge emits transcript events for inbound channel text and outbound replies", async () => {

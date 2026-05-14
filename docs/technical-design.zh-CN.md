@@ -202,9 +202,10 @@ type ChannelMedia = {
 媒体策略：
 
 - Bridge 只依赖 `ChannelMedia`，不直接引用微信协议字段。
-- Codex 输出中的图片引用会由 Bridge 抽取成 `ChannelMedia`，当前覆盖 Markdown 图片、本地绝对路径、`./`/`../`/带目录的相对路径、`file://` 和 HTTP(S) 图片 URL。
-- 通道声明 `capabilities.media=true` 且实现 `sendMedia` 时，Bridge 会调用媒体发送；否则退回文本说明，避免图片路径静默丢失。
-- 同一轮输出中的媒体按 `path/url` 去重，避免阶段性输出和最终回复重复发送同一张截图。
+- Codex 输出中的图片引用会由 Bridge 自动抽取成 `ChannelMedia`，当前覆盖 Markdown 图片、本地绝对路径、`./`/`../`/带目录的相对路径、`file://` 和 HTTP(S) 图片 URL。
+- 普通文件只从显式引用中抽取，例如 Markdown 链接、`MEDIA:`/`FILE:` 指令、`文件:`/`附件:`/`File:`/`Attachment:` 标签，避免把阶段性进度里的代码路径误发成附件。
+- 通道声明 `capabilities.media=true` 且实现 `sendMedia` 时，Bridge 会调用媒体发送；否则退回文本说明，避免图片或文件路径静默丢失。
+- 同一轮输出中的媒体按 `path/url` 去重，避免阶段性输出和最终回复重复发送同一张截图或同一个附件。
 
 ### 3.0.3 Route Key 规范
 
@@ -245,7 +246,7 @@ WeixinAdapter implements ChannelAdapter
 
 - 不 import `openclaw/plugin-sdk`，避免重新引入 OpenClaw runtime。
 - 参考 `openclaw-weixin@2.4.3` 的 HTTP JSON API，直接实现 `get_bot_qrcode`、`get_qrcode_status`、`getupdates`、`sendmessage`、`notifystart`、`notifystop` 的薄客户端。
-- 图片发送参考 `openclaw-weixin@2.4.3` 的媒体链路：`getuploadurl` 申请上传参数，本地文件用 AES-128-ECB 加密后上传 CDN，再通过 `sendmessage` 发送 `image_item`。远程图片 URL 会先下载到本地临时文件再走同一链路。
+- 图片和普通文件发送参考 `openclaw-weixin@2.4.3` 的媒体链路：`getuploadurl` 申请上传参数，本地文件用 AES-128-ECB 加密后上传 CDN，再通过 `sendmessage` 发送 `image_item` 或 `file_item`。远程媒体 URL 会先下载到本地临时文件再走同一链路。
 - 登录轮询支持 `need_verifycode` 分支；CLI 会提示输入手机微信显示的配对数字后继续轮询。
 - 登录 token 默认保存在项目根目录下 `state/weixin/`，该目录被 Git 忽略。
 - 账号 ID 会做文件名安全归一化，例如 `abc@im.bot` 归一化为 `abc-im-bot`。
@@ -336,9 +337,9 @@ type ChannelMessage = {
 - `/resume`
 - `/whoami`
 - `/debug`
-- `/approve <id>`
-- `/approve-session <id>`
-- `/deny <id>`
+- `/OK` 或 `/approve [id]`
+- `/NO` 或 `/deny [id]`
+- `/approve-session [id]`
 
 命令处理结果直接通过 Channel Adapter 回复微信，不进入 Codex。
 
@@ -829,7 +830,11 @@ Command:
 git status
 Reason: inspect workspace state
 
-回复：
+快捷回复：
+/OK
+/NO
+
+带 ID 回复：
 /approve a7k3
 /approve-session a7k3
 /deny a7k3
@@ -847,24 +852,26 @@ Reason: inspect workspace state
 
 命令执行审批：
 
-- `/approve <id>` -> `accept`
-- `/approve-session <id>` -> `acceptForSession`
-- `/deny <id>` -> `decline`
+- `/OK` 或 `/approve [id]` -> `accept`
+- `/approve-session [id]` -> `acceptForSession`
+- `/NO` 或 `/deny [id]` -> `decline`
 - `/cancel <id>` -> `cancel`
 
 文件变更审批：
 
-- `/approve <id>` -> `accept`
-- `/approve-session <id>` -> `acceptForSession`
-- `/deny <id>` -> `decline`
+- `/OK` 或 `/approve [id]` -> `accept`
+- `/approve-session [id]` -> `acceptForSession`
+- `/NO` 或 `/deny [id]` -> `decline`
 - `/cancel <id>` -> `cancel`
 
 权限审批：
 
-- `/approve <id>` -> 只批准请求的最低权限和当前 turn scope。
-- `/approve-session <id>` -> 需要管理员权限，批准 session scope。
-- `/deny <id>` -> 返回最小或空权限。
+- `/OK` 或 `/approve [id]` -> 只批准请求的最低权限和当前 turn scope。
+- `/approve-session [id]` -> 需要管理员权限，批准 session scope。
+- `/NO` 或 `/deny [id]` -> 返回最小或空权限。
 - `/cancel <id>` -> 返回拒绝并尝试中断当前 turn。
+
+无 ID 的审批命令只作用于当前 `routeKey` 最新的 pending approval；同一上下文存在多个待审批时，仍保留带 ID 命令用于精确选择。
 
 网络或 exec policy 持久化放行：
 
@@ -879,7 +886,7 @@ Reason: inspect workspace state
 - 默认审批超时，例如 10 分钟。
 - 超时后自动 `decline` 或 `cancel`，策略可配置。
 - `/status` 要展示 pending approvals 数量和最近一个审批短 ID。
-- 同一 routeKey 同时有多个审批时，必须逐个编号。
+- 同一 routeKey 同时有多个审批时，必须逐个编号；`/OK`、`/NO` 默认处理最新一条。
 - 只有原微信上下文或管理员可以响应该审批。
 - 审批完成后要发送结果确认。
 
@@ -943,7 +950,7 @@ app-server adapter 可用事件：
 - 文件变更默认发送文件列表摘要，不直接发送完整 diff。
 - turn 完成后发送最终结果，并标记为“完成”。
 - turn 失败或中断时发送明确状态。
-- 图片等媒体引用会跟随阶段性输出和最终回复被抽取；文本先发送，媒体后发送。若微信媒体上传失败，会退回一条包含路径/URL、类型和 MIME 信息的文本说明。
+- 图片和显式文件引用会跟随阶段性输出和最终回复被抽取；文本先发送，媒体后发送。图片会自动识别常见图片后缀，普通文件需要 Markdown 链接或 `FILE:`、`文件:` 等显式标记。若微信媒体上传失败，会退回一条包含路径/URL、类型和 MIME 信息的文本说明。
 - `WeixinAdapter` 出站发送采用单队列串行和最小发送间隔，降低连续进度消息在微信侧丢显或乱序的概率。
 - `sendmessage`、`getuploadurl` 的 HTTP 200 不直接视为成功；若 JSON 里 `ret/errcode` 非 0，会抛错并更新通道 `lastError`，避免终端 transcript 把失败请求打印成成功 OUT。
 

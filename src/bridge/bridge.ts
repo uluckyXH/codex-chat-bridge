@@ -122,6 +122,13 @@ export class Bridge {
       case "mode":
         await this.handleProgressModeCommand(message, target, args[0]);
         return;
+      case "ok":
+      case "yes":
+        await this.resolveApproval(message, target, args[0], "approve");
+        return;
+      case "no":
+        await this.resolveApproval(message, target, args[0], "deny");
+        return;
       case "approve":
         await this.resolveApproval(message, target, args[0], "approve");
         return;
@@ -281,14 +288,15 @@ export class Bridge {
     approvalKey: string | undefined,
     decision: ApprovalDecision,
   ): Promise<void> {
-    if (!approvalKey) {
-      await this.sendText(target, "缺少审批 ID，例如 /approve a001");
+    const key = approvalKey ?? this.approvals.latest(message.routeKey)?.approvalKey;
+    if (!key) {
+      await this.sendText(target, "当前没有待处理审批。");
       return;
     }
     try {
-      const pending = this.approvals.decide(approvalKey, message.routeKey, decision);
+      const pending = this.approvals.decide(key, message.routeKey, decision);
       await this.codex.resolveApproval?.(pending.approvalKey, decision);
-      await this.sendText(target, `审批已处理 [${approvalKey}]: ${decision}`);
+      await this.sendText(target, `审批已处理 [${pending.approvalKey}]: ${decision}`);
     } catch (error) {
       await this.sendText(target, error instanceof Error ? error.message : String(error));
     }
@@ -462,9 +470,9 @@ export class Bridge {
       "/whoami - 查看当前通道身份",
       "/debug - 查看调试状态",
       "/progress [brief|detailed|silent] - 查看或设置当前上下文进度投递模式",
-      "/approve <id> - 批准一次",
-      "/approve-session <id> - 本会话批准",
-      "/deny <id> - 拒绝一次",
+      "/OK 或 /approve [id] - 批准当前或指定审批",
+      "/NO 或 /deny [id] - 拒绝当前或指定审批",
+      "/approve-session [id] - 本会话批准当前或指定审批",
       "/cancel [id] - 取消审批或当前任务",
     ].join("\n");
   }
