@@ -7,7 +7,7 @@ This project is OpenClaw-free at runtime. It must not depend on OpenClaw CLI, Op
 ## Current Status
 
 - Node.js + TypeScript project scaffold is in place.
-- The official npm package archive is stored under `openclaw-weixin-npm/`.
+- The `@tencent-weixin/openclaw-weixin` source reference download/extract instructions live under `references/openclaw-weixin/`; local `openclaw-weixin-npm/` contents are temporary reference files and are not committed.
 - A generic `ChannelAdapter` protocol is implemented so future channels can reuse the same bridge core.
 - Mock, Terminal, and Weixin channel adapters are implemented.
 - Bridge Core, command routing, approval management, memory state, and baseline logging are implemented.
@@ -92,6 +92,6 @@ Authors: 小黄 and Codex
 
 ## References
 
-- `openclaw-weixin-npm/tencent-weixin-openclaw-weixin-2.4.3.tgz`
-- `openclaw-weixin-npm/extracted/openclaw-weixin-2.4.3/`
-- `references/openai-codex/`
+- [references/README.md](references/README.md): reference source index.
+- [references/openclaw-weixin/README.md](references/openclaw-weixin/README.md): `@tencent-weixin/openclaw-weixin` download, extraction, and key source paths.
+- `references/openai-codex/`: local shallow clone of the official Codex repository, recreated from `references/README.md` and not committed.

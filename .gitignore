@@ -24,8 +24,8 @@ logs/
 *.cookies.json
 weixin-state/
 
-# Generated or local reference extracts
-openclaw-weixin-npm/extracted/
+# Local reference package downloads and extracts
+openclaw-weixin-npm/
 
 # Large nested reference repositories are kept locally, not committed.
 references/openai-codex/
