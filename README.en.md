@@ -39,7 +39,7 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 - `--session new|last|<id>`: create a new session, resume the latest session, or bind a specific Codex session.
 - `--cwd <dir>` / `--workdir <dir>`: used only for new sessions. Missing directories are created automatically.
-- `--permission approval|full`: choose approval mode or full permission mode.
+- `--permission approval|full`: choose safe sandbox mode or full permission mode. With the current `codex exec` adapter, `approval` uses the `workspace-write` sandbox but does not create interactive approvals; real Weixin approvals require a later app-server adapter.
 - `--yes-dangerously-full`: non-interactive confirmation for full permission mode. Full mode bypasses approvals and sandboxing and is high risk.
 - `--progress brief|detailed|silent`: set the default progress delivery mode. `brief` is the default and suppresses command/tool details; `detailed` keeps full command/tool progress; `silent` sends only start, approvals, final replies, and media.
 
@@ -72,7 +72,6 @@ To invalidate Weixin login, stop the middleware and delete the whole `state/weix
 - `/OK`: approve the current Codex approval.
 - `/NO [reason]`: deny the current Codex approval and record the reason.
 - `/stop`: stop the currently running Codex task without ending the Codex session.
-- `/cancel`: same as `/stop`, kept as a compatibility alias.
 
 ## Documentation
 

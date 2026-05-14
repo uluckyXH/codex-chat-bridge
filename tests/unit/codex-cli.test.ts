@@ -10,10 +10,8 @@ function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "codex-cli-test-"));
 }
 
-test("buildCodexRootArgs maps approval and full permission modes to Codex CLI flags", () => {
+test("buildCodexRootArgs maps sandbox and full permission modes to Codex CLI flags", () => {
   assert.deepEqual(buildCodexRootArgs({ permissionMode: "approval", sandbox: "workspace-write" }), [
-    "--ask-for-approval",
-    "on-request",
     "--sandbox",
     "workspace-write",
   ]);

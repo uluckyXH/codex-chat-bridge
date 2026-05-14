@@ -203,6 +203,17 @@ test("ExecCodexAdapter lists discovered Codex sessions when route is not scoped"
   assert.equal(sessions.some((session) => session.id === "thread-history" && session.cwd === cwd), true);
 });
 
+test("ExecCodexAdapter reports non-interactive approval support", () => {
+  const adapter = new ExecCodexAdapter();
+
+  const status = adapter.getRunPolicyStatus();
+
+  assert.equal(status.policy.permissionMode, "approval");
+  assert.equal(status.interactiveApprovals, false);
+  assert.equal(status.effectiveApprovalPolicy, "never");
+  assert.match(status.note ?? "", /非交互模式/);
+});
+
 test("ExecCodexAdapter cancel terminates a running exec task", async () => {
   const root = tempDir();
   const fakeScript = path.join(root, "fake-codex.js");

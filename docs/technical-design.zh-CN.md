@@ -116,7 +116,7 @@ Terminal / Weixin / future channels
 - 选择新会话时会展示默认工作目录，支持通过交互输入或 `--cwd` / `--workdir` 指定工作目录；目录不存在时自动创建。
 - 选择历史会话时不创建新工作目录，而是从 `$CODEX_HOME/state_5.sqlite`、`$CODEX_HOME/session_index.jsonl` 和 `$CODEX_HOME/sessions/**/*.jsonl` 读取标题、首条用户消息、session 元数据和原 `cwd`，并交给 `ExecCodexAdapter.resumeSession()`。
 - Bridge 已按 routeKey 建立普通 prompt 串行队列；同一微信上下文中 Codex 正在运行时，新普通消息会排队，命令消息仍立即处理。
-- 真实 Codex 模式支持启动时先选择会话、再选择权限模式：`approval` 使用 `--ask-for-approval on-request --sandbox workspace-write`，`full` 使用 `--dangerously-bypass-approvals-and-sandbox` 并要求危险确认。
+- 真实 Codex 模式支持启动时先选择会话、再选择权限模式：当前 `codex exec` adapter 的 `approval` 使用 `--sandbox workspace-write`，但有效 `approval_policy` 仍是 `never`，不会产生交互审批；`full` 使用 `--dangerously-bypass-approvals-and-sandbox` 并要求危险确认。真正的微信审批需要后续 app-server adapter。
 
 ## 3.0 通用渠道协议
 
@@ -332,7 +332,6 @@ type ChannelMessage = {
 - `/help`
 - `/new`
 - `/status`
-- `/cancel`
 - `/sessions`
 - `/sessions all`
 - `/all-sessions`
@@ -344,7 +343,6 @@ type ChannelMessage = {
 - `/OK`
 - `/NO [理由]`
 - `/stop`
-- `/cancel`
 
 命令处理结果直接通过 Channel Adapter 回复微信，不进入 Codex。
 
@@ -642,7 +640,7 @@ src/channels/<channel-id>/
 - Terminal Channel Adapter。
 - Codex Adapter。
 - 本地终端或 mock channel，用来模拟微信输入输出。
-- `/new`、`/status`、`/OK`、`/NO`、`/stop`、`/permission`、`/cancel` 的本地验证。
+- `/new`、`/status`、`/OK`、`/NO`、`/stop`、`/permission` 的本地验证。
 - 中文测试报告。
 
 原因：
@@ -793,8 +791,7 @@ Last error: none
 `/stop` 只终止当前微信上下文绑定的 Codex 正在处理任务，不退出 Bridge，也不删除 Codex 会话绑定。
 
 - 对 CLI exec adapter：记录当前子进程，收到 `/stop` 后向该进程发送 `SIGTERM`，2 秒后仍未退出则 `SIGKILL`。
-- 对后续 app-server adapter：映射到 turn interrupt/cancel 能力。
-- `/cancel` 保留为兼容旧命令，语义等同 `/stop`。
+- 对后续 app-server adapter：映射到 turn interrupt/abort 能力。
 - `/stop` 不清空后续已排队普通消息，队列仍按顺序继续处理。
 
 ## 8.0.2 微信权限模式切换
@@ -802,7 +799,7 @@ Last error: none
 `/permission` 用于在微信侧查看和切换后续 Codex turn 的运行权限：
 
 - `/permission`：显示当前权限模式。
-- `/permission approval`：切回审批模式，使用 `--ask-for-approval on-request --sandbox workspace-write`。
+- `/permission approval`：切回 `workspace-write` sandbox。当前 `codex exec` adapter 是非交互模式，有效 `approval_policy=never`，不会在微信里弹审批；真正的微信审批需要 app-server adapter。
 - `/permission full confirm`：切到完全权限，使用 `--dangerously-bypass-approvals-and-sandbox`。必须带确认词，避免误触。
 
 权限模式切换只影响后续 turn，不热改写当前正在运行的 `codex exec` 子进程；需要立即应用时先 `/stop`。

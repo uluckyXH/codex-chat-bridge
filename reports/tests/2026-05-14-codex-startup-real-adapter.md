@@ -7,7 +7,7 @@
 - 启动时检测 `codex --version`。
 - 能发现本地 Codex 历史会话记录。
 - 能通过启动参数选择新会话。
-- 能设置审批模式参数。
+- 能设置安全沙箱模式或完全权限参数。
 - 能通过中间件调用真实 `codex exec --json` 并收到回复。
 - 完全权限模式有明确危险提醒和非交互确认参数。
 
@@ -74,6 +74,6 @@ CODEX_MIDDLEWARE_REAL_OK
 
 ## 遗留问题
 
-- `codex exec` 是非交互模式，审批参数可以传入，但完整审批回调不如 app-server 协议完整。
-- 后续仍需要实现 `codex app-server` adapter，把 command/file/permissions approval request 映射到微信 `/approve`、`/deny`、`/cancel`。
+- `codex exec` 是非交互模式，源码中默认 `approval_policy=never`，并且不支持把 command/file/permissions approval request 交互回调给微信；当前 `approval` 只代表恢复 `workspace-write` sandbox。
+- 后续仍需要实现 `codex app-server` adapter，把 command/file/permissions approval request 映射到微信 `/OK`、`/NO` 和 `/stop`。
 - 当前启动时的会话选择已支持 terminal CLI；接入微信后还需要把同样能力映射为微信命令。

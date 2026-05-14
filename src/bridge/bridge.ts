@@ -1,6 +1,6 @@
 import type { ApprovalDecision } from "../approvals/types.js";
 import { ApprovalManager } from "../approvals/approval-manager.js";
-import type { CodexRunPolicy } from "../codex/codex-cli.js";
+import type { CodexRunPolicy, CodexRunPolicyStatus } from "../codex/codex-cli.js";
 import type { CodexAdapter, CodexProgressKind, CodexSession, CodexSessionStatus } from "../codex/types.js";
 import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
@@ -147,9 +147,6 @@ export class Bridge {
         await this.resolveApproval(message, target, args, "deny");
         return;
       case "stop":
-        await this.stopCurrentTask(message, target);
-        return;
-      case "cancel":
         await this.stopCurrentTask(message, target);
         return;
       default:
@@ -393,9 +390,14 @@ export class Bridge {
     }
     if (rawMode === "approval" || rawMode === "approve" || rawMode === "safe" || rawMode === "审批") {
       this.codex.setRunPolicy({ permissionMode: "approval", sandbox: "workspace-write" });
+      const policyStatus = this.runPolicyStatus();
       await this.sendText(target, [
         "已切换 Codex 权限模式: approval",
-        "后续任务将使用审批模式和 workspace-write sandbox。",
+        "后续任务将使用 workspace-write sandbox。",
+        policyStatus && !policyStatus.interactiveApprovals
+          ? "注意：当前 Codex Adapter 不支持交互审批；真实生效的 approval_policy 仍是 never。"
+          : "后续审批请求会交给当前 Adapter 处理。",
+        policyStatus?.note ? `说明: ${policyStatus.note}` : undefined,
         this.routeWorkers.has(message.routeKey) ? "当前正在运行的任务不会被改写；需要立即生效请先 /stop。" : undefined,
       ].filter(Boolean).join("\n"));
       return;
@@ -412,7 +414,7 @@ export class Bridge {
       this.codex.setRunPolicy({ permissionMode: "full" });
       await this.sendText(target, [
         "已切换 Codex 权限模式: full",
-        "后续任务将跳过审批和沙箱。建议完成高权限任务后发送 /permission approval 切回审批模式。",
+        "后续任务将跳过审批和沙箱。建议完成高权限任务后发送 /permission approval 切回安全沙箱模式。",
         this.routeWorkers.has(message.routeKey) ? "当前正在运行的任务不会被改写；需要立即生效请先 /stop。" : undefined,
       ].filter(Boolean).join("\n"));
       return;
@@ -520,7 +522,8 @@ export class Bridge {
       : adapterStatus;
     const approvals = this.approvals.list(routeKey);
     const workerRunning = this.routeWorkers.has(routeKey);
-    const policy = this.codex.getRunPolicy?.();
+    const policyStatus = this.runPolicyStatus();
+    const policy = policyStatus?.policy ?? this.codex.getRunPolicy?.();
     return [
       `Bridge: ok`,
       `Channel: ${channelStatus.channelId} ${channelStatus.state}`,
@@ -528,6 +531,7 @@ export class Bridge {
       `Codex: ${formatCodexStatus(sessionStatus)}`,
       `Session: ${binding?.sessionId ?? "none"}`,
       policy ? `Permission: ${formatRunPolicy(policy)}` : undefined,
+      policyStatus && !policyStatus.interactiveApprovals ? `Approval: ${formatApprovalSupport(policyStatus)}` : undefined,
       `Progress mode: ${this.progressModeFor(routeKey)}`,
       binding ? `Cwd: ${localSession?.session.cwd ?? "unknown"}` : undefined,
       `Queued messages: ${this.routeQueues.get(routeKey)?.length ?? 0}`,
@@ -607,7 +611,6 @@ export class Bridge {
       "/OK - 批准当前审批",
       "/NO [理由] - 拒绝当前审批",
       "/stop - 终止当前正在处理的 Codex 任务",
-      "/cancel - 同 /stop，保留兼容旧命令",
     ].join("\n");
   }
 
@@ -633,14 +636,21 @@ export class Bridge {
   }
 
   private permissionText(): string {
-    const policy = this.codex.getRunPolicy?.();
+    const policyStatus = this.runPolicyStatus();
+    const policy = policyStatus?.policy ?? this.codex.getRunPolicy?.();
     return [
       `当前权限模式: ${policy ? formatRunPolicy(policy) : "unknown"}`,
-      "approval: 需要审批，使用 workspace-write sandbox。",
+      policyStatus ? `审批支持: ${formatApprovalSupport(policyStatus)}` : undefined,
+      "approval: 使用 workspace-write sandbox；是否能在微信里弹审批取决于 Codex adapter。",
       "full: 完全权限，跳过审批和沙箱，风险很高。",
-      "切回审批模式: /permission approval",
+      "切回安全沙箱模式: /permission approval",
       "切到完全权限: /permission full confirm",
-    ].join("\n");
+      policyStatus?.note ? `说明: ${policyStatus.note}` : undefined,
+    ].filter(Boolean).join("\n");
+  }
+
+  private runPolicyStatus(): CodexRunPolicyStatus | undefined {
+    return this.codex.getRunPolicyStatus?.();
   }
 }
 
@@ -667,6 +677,13 @@ function formatRunPolicy(policy: CodexRunPolicy): string {
   return policy.permissionMode === "full"
     ? "full"
     : `approval sandbox=${policy.sandbox ?? "workspace-write"}`;
+}
+
+function formatApprovalSupport(status: CodexRunPolicyStatus): string {
+  if (status.interactiveApprovals) {
+    return status.effectiveApprovalPolicy ? `interactive effective=${status.effectiveApprovalPolicy}` : "interactive";
+  }
+  return status.effectiveApprovalPolicy ? `not interactive effective=${status.effectiveApprovalPolicy}` : "not interactive";
 }
 
 function isConfirmed(args: string[]): boolean {

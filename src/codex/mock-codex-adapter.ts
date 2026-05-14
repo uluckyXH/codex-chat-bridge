@@ -3,6 +3,7 @@ import type {
   CodexAdapter,
   CodexEvent,
   CodexRunPolicy,
+  CodexRunPolicyStatus,
   CodexSession,
   CodexSessionStatus,
   CodexSessionSummary,
@@ -101,5 +102,13 @@ export class MockCodexAdapter implements CodexAdapter {
 
   setRunPolicy(policy: CodexRunPolicy): void {
     this.runPolicy = { ...policy };
+  }
+
+  getRunPolicyStatus(): CodexRunPolicyStatus {
+    return {
+      policy: this.getRunPolicy(),
+      interactiveApprovals: true,
+      effectiveApprovalPolicy: this.runPolicy.permissionMode === "full" ? "never" : "on-request",
+    };
   }
 }

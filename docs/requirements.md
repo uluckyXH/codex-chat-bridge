@@ -81,7 +81,7 @@ The project should be designed to support more practical commands over time. Ini
 - `/help`: list available commands and short descriptions.
 - `/new`: start a new Codex session.
 - `/status`: show combined Codex and channel status.
-- `/cancel`: cancel or interrupt the active Codex task if supported.
+- `/stop`: cancel or interrupt the active Codex task if supported.
 - `/resume`: resume or reattach to the active Codex session.
 - `/sessions`: list recent sessions for the current WeChat context.
 - `/use <session>`: switch to a known session.
@@ -204,7 +204,7 @@ The first implementation does not need to support:
 ### Milestone 3: Session Management
 
 - Persist WeChat-to-Codex mappings.
-- Add `/sessions`, `/use`, `/resume`, and `/cancel` where supported.
+- Add `/sessions`, `/use`, and `/resume` where supported.
 - Improve restart recovery.
 
 ### Milestone 4: Hardening

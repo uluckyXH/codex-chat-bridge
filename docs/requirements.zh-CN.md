@@ -16,7 +16,7 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 
 - 处理 Codex 会话、事件、审批和状态。
 - 处理微信登录、收消息、发消息和通道状态。
-- 处理 `/new`、`/status`、`/stop`、`/OK`、`/NO`、`/permission`、`/cancel` 等微信命令。
+- 处理 `/new`、`/status`、`/stop`、`/OK`、`/NO`、`/permission` 等微信命令。
 - 记录结构化日志和持久化状态。
 - 以终端命令形式启动和运行，保持轻量，不引入重框架。
 
@@ -44,7 +44,7 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 - `ExecCodexAdapter` 初版，用于后续通过 `codex exec --json` 做真实 Codex CLI 验证。
 - `ExecCodexAdapter` 已完成真实 Codex CLI 中间件调用验证。
 - 真实 Codex 模式启动时必须检测 Codex 是否可用，并允许选择历史会话或创建新会话。
-- 真实 Codex 模式启动时必须先选择新会话或历史会话，再选择权限模式：审批模式或完全权限；完全权限必须明确提示危险并要求确认。
+- 真实 Codex 模式启动时必须先选择新会话或历史会话，再选择权限模式：安全沙箱模式或完全权限；完全权限必须明确提示危险并要求确认。当前 `codex exec` 接入不支持交互审批，真实微信审批需要后续 app-server adapter。
 - 真实 Codex 模式启动时，如果选择创建新会话，必须展示默认工作目录；用户可以输入新工作目录，目录不存在时由中间件创建。
 - 真实 Codex 模式启动时，如果选择历史会话，不再询问新工作目录，必须尽量恢复该 Codex 会话历史记录中的原工作目录。
 - 历史会话列表和微信 `/sessions all` 必须优先展示 Codex 已保存的标题或首条用户消息，方便用户辨认会话 ID。
@@ -91,7 +91,7 @@ Git 管理要求：
 - Bridge Core 只能依赖通用渠道协议，不能直接依赖 `openclaw-weixin` 的原始类型。
 - `WeixinAdapter` 只是通用渠道协议的一个实现。
 - 后续 Telegram、企业微信、飞书、Slack、HTTP webhook 等渠道应能通过实现同一套 adapter contract 接入。
-- `/new`、`/status`、`/stop`、`/OK`、`/NO`、`/permission`、`/cancel` 等命令逻辑必须在 Bridge Core/Command Router 中实现，不写进某个具体渠道 adapter。
+- `/new`、`/status`、`/stop`、`/OK`、`/NO`、`/permission` 等命令逻辑必须在 Bridge Core/Command Router 中实现，不写进某个具体渠道 adapter。
 - 渠道 adapter 只负责登录、连接、收消息、发消息、能力声明和状态上报。
 - 不同渠道的用户、群、线程等上下文必须归一化为统一 route key。
 
@@ -163,7 +163,7 @@ Git 管理要求：
 
 - 默认情况下，`/new` 只切换到新会话，不强制取消旧任务。
 - 如果 Codex 当前任务无法并行运行，则提示用户先 `/stop` 或等待完成。
-- 后续可以支持 `/new --cancel-current` 或类似参数。
+- 后续可以支持 `/new --stop-current` 或类似参数。
 
 ### 3.4 自定义 `/status` 命令
 
@@ -198,7 +198,6 @@ Git 管理要求：
 - `/new`：创建并切换到新的 Codex 会话。
 - `/status`：查看 Codex 与微信通道综合状态。
 - `/stop`：立刻终止当前 Codex 任务，不结束 Codex 会话。
-- `/cancel`：同 `/stop`，保留兼容旧命令。
 - `/resume`：恢复或重新绑定已有 Codex 会话。
 - `/sessions`：列出当前微信上下文最近的 Codex 会话。
 - `/sessions all` 或 `/all-sessions`：列出全部可发现 Codex 历史会话，方便微信用户获得会话 ID 后执行 `/resume` 或 `/use`。
@@ -337,7 +336,7 @@ Codex 状态：
 - 命令消息先进入命令处理器，不直接转发给 Codex。
 - 普通消息按顺序发送给同一个 Codex 会话。
 - 同一微信上下文中，如果 Codex 正在处理普通消息，后续普通消息必须进入队列并向用户返回排队提示。
-- 命令消息不进入普通 prompt 队列，`/status`、`/stop`、`/cancel` 和审批命令应尽量立即处理。
+- 命令消息不进入普通 prompt 队列，`/status`、`/stop` 和审批命令应尽量立即处理。
 - 需要考虑微信重试或断线重连导致的重复消息。
 
 ## 6. `/status` 输出草案
@@ -458,7 +457,7 @@ Last error: none
 - 实现通用 Channel Adapter 协议和 mock channel。
 - 实现 Codex Adapter 的第一版。
 - 用终端或 mock channel 模拟微信输入输出。
-- 验证 `/new`、`/status`、`/stop`、`/OK`、`/NO`、`/permission`、`/cancel` 的本地流程。
+- 验证 `/new`、`/status`、`/stop`、`/OK`、`/NO`、`/permission` 的本地流程。
 - 验证 Codex 阶段性事件和审批请求能进入中间件。
 - 留下中文测试报告。
 
@@ -479,7 +478,7 @@ Last error: none
 - 转发普通微信消息给 Codex。
 - 把 Codex 最终回复和阶段性状态发回微信。
 - 持久化微信上下文与 Codex 会话绑定。
-- 支持 `/sessions`、`/use`、`/resume`、`/cancel`。
+- 支持 `/sessions`、`/use`、`/resume`。
 - 支持微信审批命令处理 Codex approval request。
 - 处理重启恢复。
 - 每个命令和关键状态流都要有测试报告。

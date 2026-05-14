@@ -157,7 +157,7 @@ test("Bridge exposes all sessions command for channel users", async () => {
   assert.ok(help.includes("/NO [理由] - 拒绝当前审批"));
   assert.ok(help.includes("/permission [approval|full confirm]"));
   assert.equal(help.includes("/approve [id]"), false);
-  assert.equal(help.includes("/cancel [id]"), false);
+  assert.equal(help.includes("cancel"), false);
   const allSessionsMessages = channel.sentMessages.filter((message) => message.text.startsWith("全部可发现 Codex 会话"));
   assert.equal(allSessionsMessages.length, 2);
   assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-1")));
@@ -310,22 +310,6 @@ test("Bridge status reports running work and /stop cancels the current task", as
   assert.equal(codex.cancelled, true);
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已请求停止当前 Codex 任务")));
   assert.deepEqual(channel.sentTyping.map((event) => event.typing), [true, false, false]);
-});
-
-test("Bridge treats /cancel as a stop alias for the current task", async () => {
-  const channel = new MockChannelAdapter();
-  const codex = new CancellableCodexAdapter();
-  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
-
-  await bridge.start();
-  await channel.emitText("执行一个长任务");
-  await waitFor(async () => (await codex.getStatus()).type === "running");
-  await channel.emitText("/cancel");
-  await bridge.waitForIdle();
-  await bridge.stop();
-
-  assert.equal(codex.cancelled, true);
-  assert.ok(channel.sentMessages.some((message) => message.text.includes("已请求停止当前 Codex 任务")));
 });
 
 test("Bridge queues normal prompts for the same route while keeping commands responsive", async () => {

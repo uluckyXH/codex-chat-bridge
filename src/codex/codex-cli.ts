@@ -11,6 +11,13 @@ export interface CodexRunPolicy {
   sandbox?: CodexSandboxMode;
 }
 
+export interface CodexRunPolicyStatus {
+  policy: CodexRunPolicy;
+  interactiveApprovals: boolean;
+  effectiveApprovalPolicy?: "never" | "on-request";
+  note?: string;
+}
+
 export interface CodexCliStatus {
   available: boolean;
   codexBin: string;
@@ -37,8 +44,6 @@ export function buildCodexRootArgs(policy: CodexRunPolicy): string[] {
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
   return [
-    "--ask-for-approval",
-    "on-request",
     "--sandbox",
     policy.sandbox ?? "workspace-write",
   ];

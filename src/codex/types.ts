@@ -1,7 +1,7 @@
 import type { ApprovalDecision, ApprovalRequest } from "../approvals/types.js";
-import type { CodexRunPolicy } from "./codex-cli.js";
+import type { CodexRunPolicy, CodexRunPolicyStatus } from "./codex-cli.js";
 
-export type { CodexRunPolicy } from "./codex-cli.js";
+export type { CodexRunPolicy, CodexRunPolicyStatus } from "./codex-cli.js";
 
 export interface CodexSession {
   id: string;
@@ -62,4 +62,5 @@ export interface CodexAdapter {
   resolveApproval?(approvalKey: string, decision: ApprovalDecision, reason?: string): Promise<void>;
   getRunPolicy?(): CodexRunPolicy;
   setRunPolicy?(policy: CodexRunPolicy): void;
+  getRunPolicyStatus?(): CodexRunPolicyStatus;
 }

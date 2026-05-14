@@ -273,7 +273,7 @@ async function resolvePermissionMode(options: StartupOptions, rl?: Interface): P
   if (!rl) return "approval";
   console.log("");
   console.log("Codex 权限模式（作用于本次启动后的后续任务）");
-  console.log("1. approval - 需要审批，sandbox=workspace-write");
+  console.log("1. approval - 使用 workspace-write sandbox；当前 codex exec 不支持交互审批");
   console.log("2. full - 完全权限，跳过审批和沙箱，非常危险");
   const answer = (await rl.question("请选择权限模式 [1]: ")).trim();
   if (answer === "2" || answer.toLowerCase() === "full") {
@@ -408,7 +408,7 @@ function formatPolicyForCli(policy: CodexRunPolicy): string {
   if (policy.permissionMode === "full") {
     return "full（跳过审批和沙箱）";
   }
-  return `approval（sandbox=${policy.sandbox ?? "workspace-write"}）`;
+  return `approval（sandbox=${policy.sandbox ?? "workspace-write"}；codex exec 不支持交互审批）`;
 }
 
 function printHelp(): void {
@@ -421,7 +421,7 @@ function printHelp(): void {
     "  codex-wechat-bridge terminal codex 启动本地终端通道 + codex exec",
     "    --session new|last|<id>          选择新会话或已有 Codex 会话",
     "    --cwd <dir>, --workdir <dir>     设置新会话工作目录；目录不存在会自动创建",
-    "    --permission approval|full       设置审批模式或完全权限",
+    "    --permission approval|full       设置安全沙箱或完全权限",
     "    --yes-dangerously-full           非交互确认完全权限",
     "    --progress brief|detailed|silent 设置默认进度投递模式",
     "  codex-wechat-bridge weixin codex   启动真实微信通道 + codex exec",

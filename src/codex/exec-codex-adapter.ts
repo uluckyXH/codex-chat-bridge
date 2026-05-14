@@ -4,6 +4,7 @@ import type {
   CodexAdapter,
   CodexEvent,
   CodexProgressKind,
+  CodexRunPolicyStatus,
   CodexSession,
   CodexSessionStatus,
   CodexSessionSummary,
@@ -200,6 +201,15 @@ export class ExecCodexAdapter implements CodexAdapter {
 
   setRunPolicy(policy: CodexRunPolicy): void {
     this.runPolicy = { ...policy };
+  }
+
+  getRunPolicyStatus(): CodexRunPolicyStatus {
+    return {
+      policy: this.getRunPolicy(),
+      interactiveApprovals: false,
+      effectiveApprovalPolicy: "never",
+      note: "codex exec 是非交互模式，不会把审批请求回调给微信；approval 只恢复 workspace-write sandbox。",
+    };
   }
 
   private buildArgs(stored: ExecSessionRecord, prompt: string): string[] {

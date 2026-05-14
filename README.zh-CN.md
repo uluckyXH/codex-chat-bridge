@@ -39,7 +39,7 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 - `--session new|last|<id>`：创建新会话、恢复最近会话或绑定指定 Codex 会话。
 - `--cwd <dir>` / `--workdir <dir>`：只用于新会话；目录不存在会自动创建。
-- `--permission approval|full`：选择审批模式或完全权限。
+- `--permission approval|full`：选择安全沙箱模式或完全权限。当前 `codex exec` 接入下，`approval` 会使用 `workspace-write` sandbox，但不会产生交互审批；真正的微信审批需要后续 app-server adapter。
 - `--yes-dangerously-full`：非交互确认完全权限。完全权限会跳过审批和沙箱，风险很高。
 - `--progress brief|detailed|silent`：设置默认进度投递模式。默认 `brief` 不发送命令/工具细节；`detailed` 保留完整命令/工具进度；`silent` 只发开始、审批、最终回复和媒体。
 
@@ -72,7 +72,6 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 - `/OK`：批准当前 Codex 审批。
 - `/NO [理由]`：拒绝当前 Codex 审批，并记录拒绝理由。
 - `/stop`：终止当前正在处理的 Codex 任务，不结束 Codex 会话。
-- `/cancel`：同 `/stop`，保留兼容旧命令。
 
 ## 文档
 
