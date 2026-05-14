@@ -41,7 +41,7 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 - `--session new|last|<id>`: create a new session, resume the latest session, or bind a specific Codex session.
 - `--cwd <dir>` / `--workdir <dir>`: used only for new sessions. Missing directories are created automatically.
 - `--codex-adapter app-server|exec` / `--adapter app-server|exec`: choose the Codex adapter. The default `app-server` mode supports Weixin interactive approvals; `exec` is a non-interactive fallback and does not push approval requests to Weixin.
-- `--permission approval|full`: choose safe sandbox mode or full permission mode. The default `approval` mode uses the `workspace-write` sandbox and, with app-server, routes approval requests to Weixin.
+- `--permission approval|full`: choose safe sandbox mode or full permission mode. The default `approval` mode uses the `workspace-write` sandbox and, with app-server, routes approval requests to Weixin; it keeps network access available so behavior matches the local Codex CLI `workspace-write` mode.
 - `--yes-dangerously-full`: non-interactive confirmation for full permission mode. Full mode bypasses approvals and sandboxing and is high risk.
 - `--progress brief|detailed|silent`: set the default progress delivery mode. `brief` is the default and suppresses command/tool details; `detailed` keeps full command/tool progress; `silent` sends only start, approvals, final replies, and media.
 

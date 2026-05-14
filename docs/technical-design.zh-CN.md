@@ -117,7 +117,7 @@ Terminal / Weixin / future channels
 - 选择新会话时会展示默认工作目录，支持通过交互输入或 `--cwd` / `--workdir` 指定工作目录；目录不存在时自动创建。
 - 选择历史会话时不创建新工作目录，而是从 `$CODEX_HOME/state_5.sqlite`、`$CODEX_HOME/session_index.jsonl` 和 `$CODEX_HOME/sessions/**/*.jsonl` 读取标题、首条用户消息、session 元数据和原 `cwd`，再交给当前 Codex adapter 恢复。
 - Bridge 已按 routeKey 建立普通 prompt 串行队列；同一微信上下文中 Codex 正在运行时，新普通消息会排队，命令消息仍立即处理。
-- 真实 Codex 模式支持启动时先选择会话、再选择权限模式：默认 app-server adapter 的 `approval` 使用 `workspace-write` sandbox、`approvalPolicy=on-request` 和 `approvalsReviewer=user`，可把审批推送到微信；`full` 使用完全权限并要求危险确认。`codex exec` adapter 只作为非交互回退。
+- 真实 Codex 模式支持启动时先选择会话、再选择权限模式：默认 app-server adapter 的 `approval` 使用 `workspace-write` sandbox、`approvalPolicy=on-request` 和 `approvalsReviewer=user`，可把审批推送到微信，并保留网络访问能力以对齐本机 Codex CLI 的 `workspace-write` 行为；`full` 使用完全权限并要求危险确认。`codex exec` adapter 只作为非交互回退。
 
 ## 3.0 通用渠道协议
 

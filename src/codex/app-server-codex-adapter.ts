@@ -850,7 +850,7 @@ function sandboxPolicyForRunPolicy(policy: CodexRunPolicy, cwd: string): Record<
   return {
     type: "workspaceWrite",
     writableRoots: [cwd],
-    networkAccess: false,
+    networkAccess: true,
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false,
   };

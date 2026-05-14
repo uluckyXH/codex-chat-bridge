@@ -91,6 +91,12 @@ rl.on("line", (line) => {
       send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
       return;
     }
+    if (prompt.includes("sandbox policy")) {
+      const sandboxPolicy = message.params.sandboxPolicy || {};
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "sandbox network " + sandboxPolicy.networkAccess, phase: null, memoryCitation: null } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
+      return;
+    }
     if (prompt.includes("commentary message")) {
       send({ method: "item/started", params: { threadId, turnId, startedAtMs: Date.now(), item: { type: "agentMessage", id: "commentary-1", text: "", phase: "commentary", memoryCitation: null } } });
       send({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId: "commentary-1", delta: "我正在检查状态。" } });
@@ -302,6 +308,24 @@ test("AppServerCodexAdapter records thread token usage updates", async () => {
   assert.equal(status.context?.total.totalTokens, 12345);
   assert.equal(status.context?.last.totalTokens, 789);
   assert.equal(status.context?.modelContextWindow, 200000);
+});
+
+test("AppServerCodexAdapter keeps network available in approval workspace sandbox", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+  const events = [];
+
+  for await (const event of adapter.run(session.id, "sandbox policy please")) {
+    events.push(event);
+  }
+  await adapter.stop();
+
+  assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "sandbox network true"));
 });
 
 test("AppServerCodexAdapter forwards commentary agent messages as progress", async () => {

@@ -44,7 +44,7 @@ Codex <-> Codex Adapter <-> Middleware Core <-> Weixin Adapter <-> WeChat
 - `AppServerCodexAdapter` 初版，默认通过 `codex app-server --listen stdio://` 驱动真实 Codex，并把审批请求回调给微信。
 - `ExecCodexAdapter` 已完成真实 Codex CLI 中间件调用验证，并保留为非交互回退模式。
 - 真实 Codex 模式启动时必须检测 Codex 是否可用，并允许选择历史会话或创建新会话。
-- 真实 Codex 模式启动时必须先选择新会话或历史会话，再选择权限模式：安全沙箱模式或完全权限；完全权限必须明确提示危险并要求确认。默认 app-server 接入下，安全沙箱模式必须支持把 Codex 审批请求推送到微信。
+- 真实 Codex 模式启动时必须先选择新会话或历史会话，再选择权限模式：安全沙箱模式或完全权限；完全权限必须明确提示危险并要求确认。默认 app-server 接入下，安全沙箱模式必须支持把 Codex 审批请求推送到微信，并保持与本机 Codex CLI `workspace-write` 一致的网络访问能力。
 - 真实 Codex 模式启动时，如果选择创建新会话，必须展示默认工作目录；用户可以输入新工作目录，目录不存在时由中间件创建。
 - 真实 Codex 模式启动时，如果选择历史会话，不再询问新工作目录，必须尽量恢复该 Codex 会话历史记录中的原工作目录。
 - 历史会话列表和微信 `/sessions all` 必须优先展示 Codex 已保存的标题或首条用户消息，方便用户辨认会话 ID。
