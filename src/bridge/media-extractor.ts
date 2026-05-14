@@ -41,6 +41,7 @@ interface MediaCandidate {
   value: string;
   caption?: string;
   explicit?: boolean;
+  markdownLink?: boolean;
 }
 
 export function extractMediaRefs(text: string, cwd = process.cwd()): ChannelMedia[] {
@@ -73,10 +74,12 @@ function markdownMediaRefs(text: string): MediaCandidate[] {
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     const cleaned = cleanRef(match[3]);
+    const isImage = match[1] === "!";
     if (cleaned) refs.push({
       value: cleaned,
       caption: match[2]?.trim() || undefined,
-      explicit: match[1] !== "!",
+      explicit: isImage,
+      markdownLink: !isImage,
     });
   }
   return refs;
@@ -147,7 +150,8 @@ function mediaFromCandidate(candidate: MediaCandidate, cwd: string): ChannelMedi
   if (!filePath) return undefined;
   const ext = path.extname(filePath).toLowerCase();
   const isImage = IMAGE_EXTENSIONS.has(ext);
-  if (!isImage && !candidate.explicit) return undefined;
+  const knownFile = Boolean(EXTENSION_MIME[ext]);
+  if (!isImage && !candidate.explicit && !(candidate.markdownLink && knownFile)) return undefined;
   try {
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) return undefined;
@@ -169,7 +173,9 @@ function remoteMediaFromUrl(candidate: MediaCandidate): ChannelMedia | undefined
     const url = new URL(candidate.value);
     const ext = path.extname(url.pathname).toLowerCase();
     const isImage = IMAGE_EXTENSIONS.has(ext);
+    const knownFile = Boolean(EXTENSION_MIME[ext]);
     if (!isImage && !candidate.explicit) return undefined;
+    if (!isImage && !knownFile) return undefined;
     return {
       type: isImage ? "image" : "file",
       url: url.toString(),

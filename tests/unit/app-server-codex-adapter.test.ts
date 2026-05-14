@@ -67,6 +67,22 @@ rl.on("line", (line) => {
     turnId = "turn-app-server-" + Date.now();
     send({ id: message.id, result: { turn: { id: turnId, items: [], itemsView: "complete", status: "inProgress", error: null, startedAt: 1778716800, completedAt: null, durationMs: null } } });
     const prompt = message.params.input?.[0]?.text || "";
+    if (prompt.includes("transient reconnect")) {
+      send({ method: "error", params: { threadId, turnId, error: { message: "Reconnecting... 1/5" } } });
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "reconnected done", phase: null, memoryCitation: null } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
+      return;
+    }
+    if (prompt.includes("summary parts")) {
+      send({ method: "item/started", params: { threadId, turnId, startedAtMs: Date.now(), item: { type: "reasoning", id: "reasoning-parts", summary: [], content: [] } } });
+      send({ method: "item/reasoning/summaryTextDelta", params: { threadId, turnId, itemId: "reasoning-parts", summaryIndex: 0, delta: "第一段分析" } });
+      send({ method: "item/reasoning/summaryPartAdded", params: { threadId, turnId, itemId: "reasoning-parts", summaryIndex: 1 } });
+      send({ method: "item/reasoning/summaryTextDelta", params: { threadId, turnId, itemId: "reasoning-parts", summaryIndex: 1, delta: "第二段分析。" } });
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "reasoning", id: "reasoning-parts", summary: ["第一段分析。", "第二段分析。"], content: [] } } });
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "summary parts done", phase: null, memoryCitation: null } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
+      return;
+    }
     if (prompt.includes("progress")) {
       send({ method: "item/started", params: { threadId, turnId, startedAtMs: Date.now(), item: { type: "reasoning", id: "reasoning-1", summary: [], content: [] } } });
       send({ method: "item/reasoning/summaryTextDelta", params: { threadId, turnId, itemId: "reasoning-1", summaryIndex: 0, delta: "我先确认当前状态。" } });
@@ -193,6 +209,51 @@ test("AppServerCodexAdapter emits reasoning and plan progress from app-server no
   assert.ok(events.some((event) => event.type === "assistant.progress" && event.kind === "todo" && event.text.includes("正在规划")));
   assert.ok(events.some((event) => event.type === "assistant.progress" && event.kind === "todo" && event.text.includes("检查输入并给出简短结论")));
   assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "progress done"));
+});
+
+test("AppServerCodexAdapter keeps running across transient reconnect notifications", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+  const events = [];
+
+  for await (const event of adapter.run(session.id, "transient reconnect please")) {
+    events.push(event);
+  }
+  await adapter.stop();
+
+  assert.ok(events.some((event) => event.type === "assistant.progress" && event.kind === "other" && event.text.includes("Reconnecting... 1/5")));
+  assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "reconnected done"));
+  assert.ok(events.some((event) => event.type === "turn.completed"));
+  assert.equal(events.some((event) => event.type === "turn.failed"), false);
+});
+
+test("AppServerCodexAdapter flushes reasoning summary sections", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+  const events = [];
+
+  for await (const event of adapter.run(session.id, "summary parts please")) {
+    events.push(event);
+  }
+  await adapter.stop();
+
+  const reasoningProgress = events
+    .filter((event) => event.type === "assistant.progress" && event.kind === "reasoning")
+    .map((event) => event.type === "assistant.progress" ? event.text : "");
+
+  assert.ok(reasoningProgress.some((text) => text.includes("第一段分析")));
+  assert.ok(reasoningProgress.some((text) => text.includes("第二段分析")));
+  assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "summary parts done"));
 });
 
 test("AppServerCodexAdapter reports interactive approval support", () => {

@@ -53,6 +53,28 @@ test("extractMediaRefs keeps remote markdown image URLs as media URLs", () => {
   assert.equal(media[0].caption, "chart");
 });
 
+test("extractMediaRefs does not treat ordinary remote markdown links as files", () => {
+  const media = extractMediaRefs([
+    "普通仓库链接：[ts-rs](https://github.com/Aleph-Alpha/ts-rs)",
+    "普通下载链接：[报告](https://example.com/report.pdf)",
+  ].join("\n"), process.cwd());
+
+  assert.equal(media.length, 0);
+});
+
+test("extractMediaRefs extracts explicitly labeled remote files with known file suffixes", () => {
+  const media = extractMediaRefs([
+    "FILE: https://example.com/report.pdf",
+    "附件：https://example.com/archive.zip",
+    "FILE: https://github.com/Aleph-Alpha/ts-rs",
+  ].join("\n"), process.cwd());
+
+  assert.deepEqual(media.map((item) => ({ type: item.type, url: item.url, mimeType: item.mimeType, name: item.name })), [
+    { type: "file", url: "https://example.com/report.pdf", mimeType: "application/pdf", name: "report.pdf" },
+    { type: "file", url: "https://example.com/archive.zip", mimeType: "application/zip", name: "archive.zip" },
+  ]);
+});
+
 test("extractMediaRefs extracts explicit file attachments without treating bare code paths as files", () => {
   const root = tempDir();
   const reportPath = path.join(root, "report.pdf");

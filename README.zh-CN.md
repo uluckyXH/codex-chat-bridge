@@ -53,7 +53,7 @@ npm run cli:weixin:codex -- --session last --permission approval --progress brie
 
 微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。默认发送间隔为 1200ms；遇到 `sendmessage` 限流或临时失败时会做退避重试，仍失败才进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。Codex 运行期间，微信通道会通过 `getconfig` 获取 `typing_ticket`，再周期调用 `sendtyping` 维持“对方正在输入中”状态，结束或 `/stop` 后会停止 typing。
 
-当 Codex 回复中出现可访问的媒体引用时，中间件会在发送文本后尝试发送媒体消息。图片会识别常见图片后缀；普通文件只从显式引用中提取，例如 Markdown 链接、`MEDIA:`/`FILE:` 指令、`文件:`/`File:` 标签，避免把进度里的代码路径都当附件发送。本地文件必须存在。微信发送图片使用 `image_item`，发送普通文件使用 `file_item`，底层都会走 `getuploadurl` + CDN 上传；如果通道不支持媒体或发送失败，会额外发送一条包含文件位置的文本说明。
+当 Codex 回复中出现可访问的媒体引用时，中间件会在发送文本后尝试发送媒体消息。图片会识别常见图片后缀；普通文件只从本地存在的 Markdown 文件链接，或 `MEDIA:`/`FILE:` 指令、`文件:`/`File:` 标签等显式引用中提取，避免把普通网址或代码路径当附件发送。远程普通文件必须使用显式标签且带可识别文件后缀。本地文件必须存在。微信发送图片使用 `image_item`，发送普通文件使用 `file_item`，底层都会走 `getuploadurl` + CDN 上传；如果通道不支持媒体或发送失败，会额外发送一条包含文件位置的文本说明。
 
 ## 微信登录态
 

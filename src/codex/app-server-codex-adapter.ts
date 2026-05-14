@@ -68,6 +68,7 @@ interface TurnQueueRecord {
   queue: AsyncEventQueue<CodexEvent>;
   finalText: string;
   progressDrafts: Map<string, ProgressDraft>;
+  emittedProgressItemIds: Set<string>;
   emittedProgress: Set<string>;
   closed: boolean;
 }
@@ -206,6 +207,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
       queue,
       finalText: "",
       progressDrafts: new Map(),
+      emittedProgressItemIds: new Set(),
       emittedProgress: new Set(),
       closed: false,
     });
@@ -556,6 +558,11 @@ export class AppServerCodexAdapter implements CodexAdapter {
       if (turn && itemId && delta) this.appendProgressDelta(turn, sessionId, turnId, itemId, delta, "reasoning");
       return;
     }
+    if (notification.method === "item/reasoning/summaryPartAdded") {
+      const itemId = stringValue(params.itemId);
+      if (turn && itemId) this.flushProgressDraft(turn, sessionId, turnId, itemId);
+      return;
+    }
     if (notification.method === "turn/plan/updated") {
       const text = textFromPlan(params);
       if (turn && text) this.pushProgressEvent(turn, sessionId, turnId, `计划更新: ${text}`, "todo");
@@ -583,7 +590,16 @@ export class AppServerCodexAdapter implements CodexAdapter {
       return;
     }
     if (notification.method === "error") {
-      const error = stringValue(objectValue(params.error).message) ?? "codex app-server error";
+      const error = appServerErrorMessage(params);
+      if (isTransientAppServerError(error)) {
+        const text = `Codex 连接恢复中: ${error}`;
+        if (turn) {
+          this.pushProgressEvent(turn, sessionId, turnId, text, "other");
+        } else {
+          this.pushTurnEvent(turnId, { type: "assistant.progress", sessionId, turnId, text, kind: "other" });
+        }
+        return;
+      }
       this.pushTurnEvent(turnId, { type: "turn.failed", sessionId, turnId, error });
       this.closeTurn(turnId, "failed", error);
       return;
@@ -634,6 +650,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
       return;
     }
     if (itemType === "reasoning") {
+      if (itemId && turn.emittedProgressItemIds.has(itemId)) return;
       const text = [...arrayValue(item.summary), ...arrayValue(item.content)]
         .map((entry) => typeof entry === "string" ? entry : undefined)
         .filter((entry): entry is string => Boolean(entry))
@@ -643,6 +660,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
       return;
     }
     if (itemType === "plan") {
+      if (itemId && turn.emittedProgressItemIds.has(itemId)) return;
       const text = stringValue(item.text);
       if (text) this.pushProgressEvent(turn, sessionId, turnId, `计划更新: ${text}`, "todo");
       return;
@@ -687,6 +705,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
     turn.progressDrafts.delete(itemId);
     const text = draft.text.trim();
     if (!text) return;
+    turn.emittedProgressItemIds.add(itemId);
     this.pushProgressEvent(turn, sessionId, turnId, `${draft.prefix ?? ""}${text}`, draft.kind);
   }
 
@@ -876,6 +895,16 @@ function textFromPlan(params: Record<string, unknown>): string | undefined {
 function shouldFlushProgressDraft(text: string): boolean {
   const normalized = text.trim();
   return normalized.length >= 80 || /[。！？.!?]\s*$/.test(normalized) || normalized.includes("\n");
+}
+
+function appServerErrorMessage(params: Record<string, unknown>): string {
+  return stringValue(objectValue(params.error).message)
+    ?? stringValue(params.message)
+    ?? "codex app-server error";
+}
+
+function isTransientAppServerError(message: string): boolean {
+  return /^Reconnecting\.\.\.\s+\d+\/\d+/i.test(message.trim());
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
