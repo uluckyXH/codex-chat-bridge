@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type {
   CodexAdapter,
   CodexEvent,
+  CodexProgressKind,
   CodexSession,
   CodexSessionStatus,
   CodexSessionSummary,
@@ -194,9 +195,9 @@ export function parseExecJsonLine(line: string, sessionId: string, turnId: strin
       return { event: { type: "assistant.completed", sessionId, turnId, text: parsed.item.text } };
     }
     if ((parsed.type === "item.started" || parsed.type === "item.updated" || parsed.type === "item.completed") && parsed.item) {
-      const progress = progressTextFromExecItem(parsed.type, parsed.item);
+      const progress = progressFromExecItem(parsed.type, parsed.item);
       if (progress) {
-        return { event: { type: "assistant.progress", sessionId, turnId, text: progress } };
+        return { event: { type: "assistant.progress", sessionId, turnId, text: progress.text, kind: progress.kind } };
       }
     }
     if (parsed.type === "turn.failed") {
@@ -211,7 +212,7 @@ export function parseExecJsonLine(line: string, sessionId: string, turnId: strin
   }
 }
 
-function progressTextFromExecItem(eventType: string, item: {
+function progressFromExecItem(eventType: string, item: {
   type?: string;
   text?: string;
   command?: string;
@@ -223,31 +224,32 @@ function progressTextFromExecItem(eventType: string, item: {
   server?: string;
   tool?: string;
   query?: string;
-}): string | undefined {
+}): { text: string; kind: CodexProgressKind } | undefined {
   if (item.type === "reasoning" && eventType === "item.completed" && item.text) {
-    return item.text;
+    return { text: item.text, kind: "reasoning" };
   }
   if (item.type === "command_execution" && eventType === "item.started" && item.command) {
-    return `正在执行命令: ${item.command}`;
+    return { text: `正在执行命令: ${item.command}`, kind: "command" };
   }
   if (item.type === "command_execution" && eventType === "item.completed" && item.command) {
     const status = item.status === "failed" || item.exit_code ? "失败" : "完成";
     const output = imageOutputHint(item.aggregated_output);
-    return output ? `命令${status}: ${item.command}\n输出:\n${output}` : `命令${status}: ${item.command}`;
+    const text = output ? `命令${status}: ${item.command}\n输出:\n${output}` : `命令${status}: ${item.command}`;
+    return { text, kind: "command" };
   }
   if (item.type === "file_change" && eventType === "item.completed" && item.changes?.length) {
     const paths = item.changes.map((change) => change.path).filter(Boolean).slice(0, 5).join(", ");
-    return paths ? `文件变更完成: ${paths}` : undefined;
+    return paths ? { text: `文件变更完成: ${paths}`, kind: "file_change" } : undefined;
   }
   if (item.type === "mcp_tool_call" && eventType === "item.started") {
-    return `正在调用工具: ${[item.server, item.tool].filter(Boolean).join("/")}`;
+    return { text: `正在调用工具: ${[item.server, item.tool].filter(Boolean).join("/")}`, kind: "tool" };
   }
   if (item.type === "web_search" && eventType === "item.started" && item.query) {
-    return `正在搜索: ${item.query}`;
+    return { text: `正在搜索: ${item.query}`, kind: "search" };
   }
   if (item.type === "todo_list" && item.items?.length) {
     const active = item.items.find((todo) => !todo.completed)?.text ?? item.items.at(-1)?.text;
-    return active ? `计划更新: ${active}` : undefined;
+    return active ? { text: `计划更新: ${active}`, kind: "todo" } : undefined;
   }
   return undefined;
 }

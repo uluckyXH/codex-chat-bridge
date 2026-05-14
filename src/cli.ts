@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { stdin, stdout } from "node:process";
 import { createInterface, type Interface } from "node:readline/promises";
-import { Bridge } from "./bridge/bridge.js";
+import { Bridge, parseProgressDeliveryMode, type ProgressDeliveryMode } from "./bridge/bridge.js";
 import { MockChannelAdapter } from "./channels/mock/mock-channel-adapter.js";
 import { TerminalChannelAdapter } from "./channels/terminal/terminal-channel-adapter.js";
 import { WeixinAdapter } from "./channels/weixin/weixin-adapter.js";
@@ -17,6 +17,7 @@ interface StartupOptions {
   permission?: CodexPermissionMode;
   yesDangerouslyFull?: boolean;
   cwd?: string;
+  progressMode?: ProgressDeliveryMode;
 }
 
 interface PreparedCodexStartup {
@@ -129,6 +130,12 @@ function parseStartupOptions(args: string[]): StartupOptions {
       const value = args[++index];
       if (!value) throw new Error(`${arg} 需要目录参数`);
       options.cwd = value;
+    } else if (arg === "--progress" || arg === "--progress-mode") {
+      const value = args[++index];
+      if (!value) throw new Error(`${arg} 需要模式参数`);
+      const mode = parseProgressDeliveryMode(value);
+      if (!mode) throw new Error(`${arg} 只能是 brief、detailed 或 silent`);
+      options.progressMode = mode;
     } else {
       throw new Error(`未知启动参数: ${arg}`);
     }
@@ -145,6 +152,7 @@ async function runTerminalBridge(mode: "mock" | "codex", options: StartupOptions
     codex,
     logger: new ConsoleLogger(false),
     cwd: startup.cwd,
+    progressMode: options.progressMode,
   });
 
   await bridge.start();
@@ -170,6 +178,7 @@ async function runWeixinCodexBridge(options: StartupOptions = {}): Promise<void>
     transcript: new ConsoleTranscriptSink(),
     cwd: startup.cwd,
     initialSessionId: startup.sessionId,
+    progressMode: options.progressMode,
   });
 
   await bridge.start();
@@ -358,6 +367,7 @@ function printHelp(): void {
     "    --cwd <dir>, --workdir <dir>     设置新会话工作目录；目录不存在会自动创建",
     "    --permission approval|full       设置审批模式或完全权限",
     "    --yes-dangerously-full           非交互确认完全权限",
+    "    --progress brief|detailed|silent 设置默认进度投递模式",
     "  codex-wechat-bridge weixin codex   启动真实微信通道 + codex exec",
     "  codex-wechat-bridge weixin status  查看 WeixinAdapter 当前状态",
     "  codex-wechat-bridge weixin login   显示第二阶段登录提示",

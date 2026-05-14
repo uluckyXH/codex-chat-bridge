@@ -34,19 +34,22 @@ Real Codex mode supports startup options:
 
 ```bash
 npm run cli:terminal:codex -- --session new --permission approval --cwd ./workspaces/demo
-npm run cli:weixin:codex -- --session last --permission approval
+npm run cli:weixin:codex -- --session last --permission approval --progress brief
 ```
 
 - `--session new|last|<id>`: create a new session, resume the latest session, or bind a specific Codex session.
 - `--cwd <dir>` / `--workdir <dir>`: used only for new sessions. Missing directories are created automatically.
 - `--permission approval|full`: choose approval mode or full permission mode.
 - `--yes-dangerously-full`: non-interactive confirmation for full permission mode. Full mode bypasses approvals and sandboxing and is high risk.
+- `--progress brief|detailed|silent`: set the default progress delivery mode. `brief` is the default and suppresses command/tool details; `detailed` keeps full command/tool progress; `silent` sends only start, approvals, final replies, and media.
 
 During interactive startup, choosing a new session displays the default working directory. If the user enters a missing directory, the middleware creates it. If an existing session is selected, the middleware uses the working directory recorded in that Codex session history.
 
 The current `codex exec --json` mode can reuse Codex history sessions, but it does not live-sync Weixin-side interaction into another already-open Codex CLI or Codex App window. Real-time multi-view synchronization needs a later app-server/event-subscription adapter, or a middleware-owned observer UI where the middleware is the single session entry point.
 
-Normal messages from the same channel context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/cancel`, and approval commands still run immediately. Current progress updates come from events visible in `codex exec --json`, including turn start, reasoning summaries, command/tool/file-change summaries, and final replies. Finer same-turn steering needs a later app-server adapter.
+Normal messages from the same channel context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/cancel`, and approval commands still run immediately. Current progress updates come from events visible in `codex exec --json`. The default `brief` progress mode sends planning/reasoning, search, and file-change summaries, but suppresses command/tool details. Use `/progress detailed` or `--progress detailed` when full debugging detail is needed. Finer same-turn steering needs a later app-server adapter.
+
+Weixin outbound messages are serialized with a small interval to reduce dropped or hidden rapid-fire progress messages. If `sendmessage` returns a business error code, the channel enters `degraded` state and records `lastError` instead of logging the request as a successful OUT.
 
 When Codex output contains an accessible image reference, the bridge sends the text first and then attempts a media message. It currently recognizes `.png`, `.jpg/.jpeg`, `.gif`, `.webp`, `.bmp`, `.tif/.tiff`, and `.svg`; local files must exist. Weixin image send uses `getuploadurl`, CDN upload, and `image_item`; unsupported channels or failed media sends get a text fallback with the image location.
 
@@ -58,6 +61,7 @@ When Codex output contains an accessible image reference, the bridge sends the t
 - `/sessions`: list sessions known to the current channel context.
 - `/sessions all` or `/all-sessions`: list all discoverable Codex history session IDs.
 - `/resume <session>` / `/use <session>`: resume and bind a Codex session.
+- `/progress [brief|detailed|silent]`: show or set progress delivery mode for the current channel context.
 - `/approve <id>`, `/approve-session <id>`, `/deny <id>`, `/cancel [id]`: handle Codex approvals or cancel the current task.
 
 ## Documentation

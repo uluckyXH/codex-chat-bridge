@@ -1,6 +1,6 @@
 import type { ApprovalDecision } from "../approvals/types.js";
 import { ApprovalManager } from "../approvals/approval-manager.js";
-import type { CodexAdapter, CodexSession, CodexSessionStatus } from "../codex/types.js";
+import type { CodexAdapter, CodexProgressKind, CodexSession, CodexSessionStatus } from "../codex/types.js";
 import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
 import { SilentLogger } from "../logging/logger.js";
@@ -19,6 +19,7 @@ export interface BridgeOptions {
   transcript?: TranscriptSink;
   cwd?: string;
   initialSessionId?: string;
+  progressMode?: ProgressDeliveryMode;
 }
 
 interface QueuedPrompt {
@@ -26,6 +27,8 @@ interface QueuedPrompt {
   target: ChannelTarget;
   prompt: string;
 }
+
+export type ProgressDeliveryMode = "brief" | "detailed" | "silent";
 
 export class Bridge {
   private readonly channel: ChannelAdapter;
@@ -35,6 +38,8 @@ export class Bridge {
   private readonly logger: Logger;
   private readonly transcript?: TranscriptSink;
   private readonly cwd: string;
+  private readonly defaultProgressMode: ProgressDeliveryMode;
+  private readonly routeProgressModes = new Map<string, ProgressDeliveryMode>();
   private readonly routeQueues = new Map<string, QueuedPrompt[]>();
   private readonly routeWorkers = new Map<string, Promise<void>>();
   private initialSessionId?: string;
@@ -48,6 +53,7 @@ export class Bridge {
     this.transcript = options.transcript;
     this.cwd = options.cwd ?? process.cwd();
     this.initialSessionId = options.initialSessionId;
+    this.defaultProgressMode = options.progressMode ?? "brief";
   }
 
   async start(): Promise<void> {
@@ -111,6 +117,10 @@ export class Bridge {
         return;
       case "debug":
         await this.sendText(target, await this.debugText(message.routeKey));
+        return;
+      case "progress":
+      case "mode":
+        await this.handleProgressModeCommand(message, target, args[0]);
         return;
       case "approve":
         await this.resolveApproval(message, target, args[0], "approve");
@@ -219,8 +229,9 @@ export class Bridge {
       if (event.type === "turn.started") {
         this.state.setSessionStatus(session.id, { type: "running", turnId: event.turnId });
       } else if (event.type === "assistant.progress") {
-        const progressText = `Codex 进度:\n${truncateForChannel(event.text)}`;
-        await this.sendText(target, progressText);
+        if (this.shouldDeliverProgress(message.routeKey, event.kind)) {
+          await this.sendProgressText(target, `Codex 进度:\n${truncateForChannel(event.text)}`);
+        }
         await this.sendExtractedMedia(target, event.text, session.cwd, sentMediaKeys);
       } else if (event.type === "assistant.delta") {
         finalText += event.text;
@@ -298,9 +309,38 @@ export class Bridge {
     await this.sendText(target, `已请求取消会话: ${binding.sessionId}`);
   }
 
+  private async handleProgressModeCommand(
+    message: ChannelMessage,
+    target: ChannelTarget,
+    rawMode: string | undefined,
+  ): Promise<void> {
+    if (!rawMode) {
+      await this.sendText(target, this.progressModeText(message.routeKey));
+      return;
+    }
+    const mode = parseProgressDeliveryMode(rawMode);
+    if (!mode) {
+      await this.sendText(target, "未知进度模式。可用值: brief, detailed, silent。");
+      return;
+    }
+    this.routeProgressModes.set(message.routeKey, mode);
+    await this.sendText(target, this.progressModeText(message.routeKey));
+  }
+
   private async sendText(target: ChannelTarget, text: string): Promise<void> {
     await this.channel.sendText(target, text);
     this.transcript?.outbound(target, text);
+  }
+
+  private async sendProgressText(target: ChannelTarget, text: string): Promise<void> {
+    try {
+      await this.sendText(target, text);
+    } catch (error) {
+      this.logger.warn("progress message send failed", {
+        channel: this.channel.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private async sendExtractedMedia(
@@ -348,6 +388,7 @@ export class Bridge {
       `Channel: ${channelStatus.channelId} ${channelStatus.state}`,
       `Codex: ${sessionStatus.type}`,
       `Session: ${binding?.sessionId ?? "none"}`,
+      `Progress mode: ${this.progressModeFor(routeKey)}`,
       binding ? `Cwd: ${this.state.getSession(binding.sessionId)?.session.cwd ?? "unknown"}` : undefined,
       `Queued messages: ${this.routeQueues.get(routeKey)?.length ?? 0}`,
       `Pending approvals: ${approvals.length}`,
@@ -420,10 +461,32 @@ export class Bridge {
       "/use <session> - 切换到已有会话",
       "/whoami - 查看当前通道身份",
       "/debug - 查看调试状态",
+      "/progress [brief|detailed|silent] - 查看或设置当前上下文进度投递模式",
       "/approve <id> - 批准一次",
       "/approve-session <id> - 本会话批准",
       "/deny <id> - 拒绝一次",
       "/cancel [id] - 取消审批或当前任务",
+    ].join("\n");
+  }
+
+  private progressModeFor(routeKey: string): ProgressDeliveryMode {
+    return this.routeProgressModes.get(routeKey) ?? this.defaultProgressMode;
+  }
+
+  private shouldDeliverProgress(routeKey: string, kind: CodexProgressKind | undefined): boolean {
+    const mode = this.progressModeFor(routeKey);
+    if (mode === "silent") return false;
+    if (mode === "detailed") return true;
+    return kind === "reasoning" || kind === "todo" || kind === "search" || kind === "file_change" || kind === "other";
+  }
+
+  private progressModeText(routeKey: string): string {
+    const mode = this.progressModeFor(routeKey);
+    return [
+      `当前进度投递模式: ${mode}`,
+      "brief: 只发送计划、自言自语、搜索和文件变更摘要，不发送命令/工具细节。",
+      "detailed: 发送所有可见进度，包括命令和工具调用细节。",
+      "silent: 不发送进度文本，只发送开始、审批、最终回复和媒体。",
     ].join("\n");
   }
 }
@@ -451,4 +514,12 @@ function fallbackMediaText(media: ChannelMedia, mediaCapability: boolean): strin
     `Location: ${location}`,
     reason,
   ].filter(Boolean).join("\n");
+}
+
+export function parseProgressDeliveryMode(value: string): ProgressDeliveryMode | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "brief" || normalized === "normal") return "brief";
+  if (normalized === "detailed" || normalized === "verbose" || normalized === "debug") return "detailed";
+  if (normalized === "silent" || normalized === "quiet" || normalized === "off" || normalized === "none") return "silent";
+  return undefined;
 }

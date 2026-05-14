@@ -34,19 +34,22 @@ npm run cli:weixin:codex
 
 ```bash
 npm run cli:terminal:codex -- --session new --permission approval --cwd ./workspaces/demo
-npm run cli:weixin:codex -- --session last --permission approval
+npm run cli:weixin:codex -- --session last --permission approval --progress brief
 ```
 
 - `--session new|last|<id>`：创建新会话、恢复最近会话或绑定指定 Codex 会话。
 - `--cwd <dir>` / `--workdir <dir>`：只用于新会话；目录不存在会自动创建。
 - `--permission approval|full`：选择审批模式或完全权限。
 - `--yes-dangerously-full`：非交互确认完全权限。完全权限会跳过审批和沙箱，风险很高。
+- `--progress brief|detailed|silent`：设置默认进度投递模式。默认 `brief` 不发送命令/工具细节；`detailed` 保留完整命令/工具进度；`silent` 只发开始、审批、最终回复和媒体。
 
 交互启动时，如果选择新会话，会展示默认工作目录。用户输入新目录时，目录不存在会自动创建；如果选择历史会话，中间件会使用该 Codex 会话历史记录里的工作目录。
 
 当前 `codex exec --json` 模式会复用 Codex 历史会话，但不会把微信侧交互实时同步到另一个已经打开的 Codex CLI 或 Codex App 窗口。要实现多端实时同屏，需要后续切换到更完整的 Codex app-server/事件订阅方案，或让中间件成为唯一会话入口并提供自己的观察端。
 
-同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/cancel`、审批命令仍会立即处理。当前 exec 模式的“中途输出”来自 `codex exec --json` 可见事件，包括开始处理、reasoning summary、命令/工具/文件变更等进度摘要；更细的同 turn 插入和 steering 需要后续 app-server adapter。
+同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/cancel`、审批命令仍会立即处理。当前 exec 模式的“中途输出”来自 `codex exec --json` 可见事件。默认 `brief` 进度模式只投递计划、自言自语、搜索和文件变更摘要，不投递命令/工具细节；需要完整调试信息时可发送 `/progress detailed` 或启动时传 `--progress detailed`。更细的同 turn 插入和 steering 需要后续 app-server adapter。
+
+微信出站消息会串行排队并做轻量间隔，避免连续进度消息过快导致微信侧丢显。`sendmessage` 返回业务错误码时会进入 `degraded` 状态并记录 `lastError`，不会再把这类请求误记为成功 OUT。
 
 当 Codex 回复中出现可访问的图片引用时，中间件会在发送文本后尝试发送媒体消息。当前识别 `.png`、`.jpg/.jpeg`、`.gif`、`.webp`、`.bmp`、`.tif/.tiff`、`.svg`；本地文件必须存在。微信发送图片使用 `getuploadurl` + CDN 上传 + `image_item`；如果通道不支持媒体或发送失败，会额外发送一条包含图片位置的文本说明。
 
@@ -58,6 +61,7 @@ npm run cli:weixin:codex -- --session last --permission approval
 - `/sessions`：查看当前微信上下文绑定过的会话。
 - `/sessions all` 或 `/all-sessions`：查看全部可发现 Codex 历史会话 ID。
 - `/resume <session>` / `/use <session>`：恢复并绑定指定 Codex 会话。
+- `/progress [brief|detailed|silent]`：查看或设置当前微信上下文的进度投递模式。
 - `/approve <id>`、`/approve-session <id>`、`/deny <id>`、`/cancel [id]`：处理 Codex 审批或取消当前任务。
 
 ## 文档

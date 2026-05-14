@@ -86,6 +86,7 @@ test("WeixinAdapter sends text messages with stored token and context token", as
     baseUrl: "https://api.example",
     store,
     pollOnStart: false,
+    outboundMinIntervalMs: 0,
     apiOptions: { fetch: fetchImpl },
   });
 
@@ -106,6 +107,41 @@ test("WeixinAdapter sends text messages with stored token and context token", as
   assert.equal(body.msg.context_token, "ctx-1");
   assert.equal(body.msg.item_list[0].text_item.text, "hello");
   assert.equal(result.channelId, "weixin");
+});
+
+test("WeixinAdapter treats sendmessage errcode as delivery failure", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-1",
+    baseUrl: "https://api.example",
+    savedAt: new Date().toISOString(),
+  });
+  const fetchImpl: FetchLike = async (input) => {
+    const url = String(input);
+    if (url.includes("sendmessage")) {
+      return jsonResponse({ ret: 0, errcode: 45009, errmsg: "rate limited" });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    pollOnStart: false,
+    outboundMinIntervalMs: 0,
+    apiOptions: { fetch: fetchImpl },
+  });
+
+  await assert.rejects(() => adapter.sendText({
+    channelId: "weixin",
+    routeKey: "weixin:abc-im-bot:direct:user@im.wechat",
+    accountId: "abc-im-bot",
+    conversation: { id: "user@im.wechat", kind: "direct" },
+    recipient: { id: "user@im.wechat" },
+  }, "hello"), /sendmessage failed/);
+  const status = await adapter.getStatus();
+  assert.equal(status.state, "degraded");
+  assert.match(status.lastError ?? "", /45009/);
 });
 
 test("WeixinAdapter uploads and sends image media with caption", async () => {
@@ -143,6 +179,7 @@ test("WeixinAdapter uploads and sends image media with caption", async () => {
     baseUrl: "https://api.example",
     store,
     pollOnStart: false,
+    outboundMinIntervalMs: 0,
     apiOptions: { fetch: fetchImpl },
   });
 

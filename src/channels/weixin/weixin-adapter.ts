@@ -45,6 +45,7 @@ export interface WeixinAdapterOptions {
   longPollTimeoutMs?: number;
   loginTimeoutMs?: number;
   loginPollIntervalMs?: number;
+  outboundMinIntervalMs?: number;
 }
 
 export interface WeixinLoginStartResult extends ChannelLoginResult {
@@ -79,11 +80,14 @@ export class WeixinAdapter implements ChannelAdapter {
   private readonly longPollTimeoutMs: number;
   private readonly loginTimeoutMs: number;
   private readonly loginPollIntervalMs: number;
+  private readonly outboundMinIntervalMs: number;
   private handler?: ChannelMessageHandler;
   private status: ChannelStatus;
   private activeLogin?: ActiveLogin;
   private abortController?: AbortController;
   private pollTask?: Promise<void>;
+  private outboundQueue: Promise<void> = Promise.resolve();
+  private lastOutboundSentAt = 0;
 
   constructor(private readonly options: WeixinAdapterOptions = {}) {
     this.sourceVersion = options.sourceVersion ?? "2.4.3";
@@ -102,6 +106,7 @@ export class WeixinAdapter implements ChannelAdapter {
     this.longPollTimeoutMs = options.longPollTimeoutMs ?? 35_000;
     this.loginTimeoutMs = options.loginTimeoutMs ?? 480_000;
     this.loginPollIntervalMs = options.loginPollIntervalMs ?? 1000;
+    this.outboundMinIntervalMs = options.outboundMinIntervalMs ?? 600;
     this.status = {
       channelId: this.id,
       state: "login_required",
@@ -133,6 +138,7 @@ export class WeixinAdapter implements ChannelAdapter {
 
   async stop(): Promise<void> {
     this.abortController?.abort();
+    await this.outboundQueue.catch(() => undefined);
     const account = this.resolveAccount();
     if (account) {
       try {
@@ -231,7 +237,7 @@ export class WeixinAdapter implements ChannelAdapter {
         context_token: contextToken,
       },
     };
-    await this.api.sendMessage({ token: account.token, body });
+    await this.sendRawMessage(account, body);
     const deliveredAt = new Date().toISOString();
     this.status = {
       ...this.status,
@@ -434,7 +440,7 @@ export class WeixinAdapter implements ChannelAdapter {
           context_token: contextToken,
         },
       };
-      await this.api.sendMessage({ token: account.token, body });
+      await this.sendRawMessage(account, body);
       lastBody = body;
     }
     const deliveredAt = new Date().toISOString();
@@ -456,6 +462,42 @@ export class WeixinAdapter implements ChannelAdapter {
   private resolveAccount(accountId = this.accountId): StoredWeixinAccount | undefined {
     if (accountId) return this.store.loadAccount(normalizeWeixinAccountId(accountId));
     return this.store.getDefaultAccount();
+  }
+
+  private async sendRawMessage(account: StoredWeixinAccount, body: WeixinSendMessageRequest): Promise<void> {
+    try {
+      await this.enqueueOutbound(async () => {
+        await this.api.sendMessage({ token: account.token, body });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.status = {
+        ...this.status,
+        state: "degraded",
+        account: account.accountId,
+        lastError: message,
+      };
+      throw error;
+    }
+  }
+
+  private enqueueOutbound<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.outboundQueue.catch(() => undefined).then(async () => {
+      await this.waitForOutboundPace();
+      try {
+        return await operation();
+      } finally {
+        this.lastOutboundSentAt = Date.now();
+      }
+    });
+    this.outboundQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async waitForOutboundPace(): Promise<void> {
+    if (this.outboundMinIntervalMs <= 0 || this.lastOutboundSentAt <= 0) return;
+    const waitMs = this.outboundMinIntervalMs - (Date.now() - this.lastOutboundSentAt);
+    if (waitMs > 0) await sleep(waitMs);
   }
 
   private statusDetails(phase: string): Record<string, unknown> {

@@ -55,6 +55,7 @@ test("parseExecJsonLine maps exec progress items", () => {
     sessionId: "local-session",
     turnId: "turn-1",
     text: "我先检查项目结构。",
+    kind: "reasoning",
   });
 
   assert.deepEqual(parseExecJsonLine(
@@ -66,6 +67,7 @@ test("parseExecJsonLine maps exec progress items", () => {
     sessionId: "local-session",
     turnId: "turn-1",
     text: "正在执行命令: npm test",
+    kind: "command",
   });
 
   assert.deepEqual(parseExecJsonLine(
@@ -87,6 +89,7 @@ test("parseExecJsonLine maps exec progress items", () => {
     sessionId: "local-session",
     turnId: "turn-1",
     text: "命令完成: node screenshot.js\n输出:\nsaved screenshot: /tmp/codex-shot.png",
+    kind: "command",
   });
 });
 

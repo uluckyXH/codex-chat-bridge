@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Bridge } from "../../src/bridge/bridge.js";
 import { MockChannelAdapter } from "../../src/channels/mock/mock-channel-adapter.js";
 import { MockCodexAdapter } from "../../src/codex/mock-codex-adapter.js";
+import type { CodexEvent } from "../../src/codex/types.js";
 import type { TranscriptSink } from "../../src/logging/transcript.js";
 import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../../src/protocol/channel.js";
 import fs from "node:fs";
@@ -24,6 +25,17 @@ class CapturingTranscriptSink implements TranscriptSink {
 
   outboundMedia(target: ChannelTarget, media: ChannelMedia): void {
     this.outboundMediaEvents.push({ target, media });
+  }
+}
+
+class ProgressCodexAdapter extends MockCodexAdapter {
+  override async *run(sessionId: string, _prompt: string): AsyncIterable<CodexEvent> {
+    const turnId = `progress-turn-${Date.now()}`;
+    yield { type: "turn.started", sessionId, turnId };
+    yield { type: "assistant.progress", sessionId, turnId, kind: "reasoning", text: "我先列一个简短计划。" };
+    yield { type: "assistant.progress", sessionId, turnId, kind: "command", text: "正在执行命令: npm test" };
+    yield { type: "assistant.completed", sessionId, turnId, text: "完成" };
+    yield { type: "turn.completed", sessionId, turnId };
   }
 }
 
@@ -119,6 +131,35 @@ test("Bridge forwards generated image refs as channel media and transcript media
   assert.equal(channel.sentMedia[0].media.mimeType, "image/png");
   assert.equal(transcript.outboundMediaEvents.length, 1);
   assert.equal(transcript.outboundMediaEvents[0].media.path, imagePath);
+});
+
+test("Bridge default progress mode suppresses command details but keeps reasoning progress", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new ProgressCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("跑一个带进度的任务");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("我先列一个简短计划")));
+  assert.equal(channel.sentMessages.some((message) => message.text.includes("正在执行命令: npm test")), false);
+});
+
+test("Bridge progress command enables detailed progress for the current route", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new ProgressCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/progress detailed");
+  await channel.emitText("跑一个带详细进度的任务");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("当前进度投递模式: detailed")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("正在执行命令: npm test")));
 });
 
 test("Bridge queues normal prompts for the same route while keeping commands responsive", async () => {

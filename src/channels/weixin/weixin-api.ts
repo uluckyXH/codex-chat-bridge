@@ -77,7 +77,7 @@ export class WeixinApiClient {
     body: WeixinSendMessageRequest;
     timeoutMs?: number;
   }): Promise<void> {
-    await this.postJson<unknown>({
+    const response = await this.postJson<WeixinApiResponse>({
       endpoint: "ilink/bot/sendmessage",
       token: params.token,
       timeoutMs: params.timeoutMs,
@@ -86,6 +86,7 @@ export class WeixinApiClient {
         base_info: this.baseInfo(),
       },
     });
+    assertWeixinApiSuccess(response, "sendmessage");
   }
 
   async getUploadUrl(params: {
@@ -93,12 +94,17 @@ export class WeixinApiClient {
     body: WeixinGetUploadUrlRequest;
     timeoutMs?: number;
   }): Promise<WeixinGetUploadUrlResponse> {
-    return this.postJson<WeixinGetUploadUrlResponse>({
+    const response = await this.postJson<WeixinGetUploadUrlResponse & WeixinApiResponse>({
       endpoint: "ilink/bot/getuploadurl",
       token: params.token,
       timeoutMs: params.timeoutMs,
-      body: params.body,
+      body: {
+        ...params.body,
+        base_info: this.baseInfo(),
+      },
     });
+    assertWeixinApiSuccess(response, "getuploadurl");
+    return response;
   }
 
   async uploadCdnBuffer(params: {
@@ -237,4 +243,18 @@ function buildClientVersion(version: string): number {
 function randomWechatUin(): string {
   const value = crypto.randomBytes(4).readUInt32BE(0);
   return Buffer.from(String(value), "utf-8").toString("base64");
+}
+
+interface WeixinApiResponse {
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+}
+
+function assertWeixinApiSuccess(response: WeixinApiResponse | undefined, label: string): void {
+  const ret = response?.ret ?? 0;
+  const errcode = response?.errcode ?? 0;
+  if (ret !== 0 || errcode !== 0) {
+    throw new Error(`${label} failed: ret=${ret} errcode=${errcode} ${response?.errmsg ?? ""}`.trim());
+  }
 }

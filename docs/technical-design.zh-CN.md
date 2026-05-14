@@ -908,6 +908,14 @@ CLI JSONL adapter 可用事件：
 - `item.completed` + `file_change`：发送文件变更摘要。
 - `mcp_tool_call`、`web_search`、`todo_list`：发送工具、搜索或计划摘要。
 
+Bridge 会把进度事件标记为 `reasoning`、`todo`、`search`、`file_change`、`command`、`tool` 等类别，并按投递模式过滤：
+
+- `brief`：默认模式，只投递计划/自言自语、搜索和文件变更摘要，不投递命令/工具细节。
+- `detailed`：调试模式，投递全部可见进度，包括命令开始/完成和工具调用。
+- `silent`：安静模式，不投递进度文本；开始处理、审批、最终回复和媒体仍会发送。
+
+用户可通过 `/progress [brief|detailed|silent]` 为当前 route 调整模式；CLI 可通过 `--progress brief|detailed|silent` 设置默认模式。
+
 app-server adapter 可用事件：
 
 - `thread/status/changed`
@@ -936,6 +944,8 @@ app-server adapter 可用事件：
 - turn 完成后发送最终结果，并标记为“完成”。
 - turn 失败或中断时发送明确状态。
 - 图片等媒体引用会跟随阶段性输出和最终回复被抽取；文本先发送，媒体后发送。若微信媒体上传失败，会退回一条包含路径/URL、类型和 MIME 信息的文本说明。
+- `WeixinAdapter` 出站发送采用单队列串行和最小发送间隔，降低连续进度消息在微信侧丢显或乱序的概率。
+- `sendmessage`、`getuploadurl` 的 HTTP 200 不直接视为成功；若 JSON 里 `ret/errcode` 非 0，会抛错并更新通道 `lastError`，避免终端 transcript 把失败请求打印成成功 OUT。
 
 ### 8.2.3 用户可见模式
 
