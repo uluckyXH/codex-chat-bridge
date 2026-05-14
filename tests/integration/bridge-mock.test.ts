@@ -198,7 +198,7 @@ test("Bridge emits transcript events for inbound channel text and outbound repli
 
   assert.equal(transcript.inboundEvents.length, 1);
   assert.equal(transcript.inboundEvents[0].text, "你好，打印到终端");
-  assert.ok(transcript.outboundEvents.some((event) => event.text.includes("Codex 开始处理")));
+  assert.ok(transcript.outboundEvents.some((event) => event.text.includes("Codex 正在处理这条消息")));
   assert.ok(transcript.outboundEvents.some((event) => event.text === "Mock Codex 回复: 你好，打印到终端"));
 });
 
@@ -293,7 +293,7 @@ test("Bridge status reports running work and /stop cancels the current task", as
 
   await bridge.start();
   await channel.emitText("执行一个长任务");
-  await waitFor(() => channel.sentMessages.some((message) => message.text.includes("Codex 开始处理")));
+  await waitFor(() => channel.sentMessages.some((message) => message.text.includes("Codex 正在处理这条消息")));
   await waitFor(() => channel.sentTyping.some((event) => event.typing));
   await waitFor(async () => (await codex.getStatus()).type === "running");
 

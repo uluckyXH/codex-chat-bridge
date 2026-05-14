@@ -25,13 +25,8 @@ export class ConsoleLogger implements Logger {
   }
 
   private write(level: string, message: string, meta?: Record<string, unknown>): void {
-    const payload = {
-      ts: new Date().toISOString(),
-      level,
-      message,
-      ...(meta ? { meta: redact(meta) } : {}),
-    };
-    const line = JSON.stringify(payload);
+    const metaText = meta ? ` ${formatMeta(redact(meta))}` : "";
+    const line = `[${formatClock(new Date())}] ${level.toUpperCase()} ${message}${metaText}`;
     if (level === "error") {
       console.error(line);
     } else {
@@ -57,4 +52,25 @@ function redact(value: Record<string, unknown>): Record<string, unknown> {
     }
   }
   return result;
+}
+
+function formatMeta(value: Record<string, unknown>): string {
+  return Object.entries(value)
+    .map(([key, item]) => `${key}=${formatMetaValue(item)}`)
+    .join(" ");
+}
+
+function formatMetaValue(value: unknown): string {
+  if (typeof value === "string") return value.includes(" ") ? JSON.stringify(value) : value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  return JSON.stringify(value);
+}
+
+function formatClock(date: Date): string {
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
 }

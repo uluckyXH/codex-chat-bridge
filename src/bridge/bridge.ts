@@ -232,8 +232,8 @@ export class Bridge {
   private async forwardPrompt(message: ChannelMessage, target: ChannelTarget, prompt: string, remainingQueued: number): Promise<void> {
     const session = await this.ensureSession(message);
     await this.sendText(target, [
-      "Codex 开始处理",
-      `Session: ${session.id}`,
+      "Codex 正在处理这条消息。",
+      "可发送 /status 查看状态，/stop 终止。",
       remainingQueued > 0 ? `Queue: 后面还有 ${remainingQueued} 条` : undefined,
     ].filter(Boolean).join("\n"));
     await this.withTyping(target, async () => {
@@ -356,7 +356,7 @@ export class Bridge {
     await this.codex.cancel(binding.sessionId);
     this.state.setSessionStatus(binding.sessionId, { type: "idle" });
     await this.sendTyping(target, false);
-    await this.sendText(target, `已请求停止当前 Codex 任务\nSession: ${binding.sessionId}`);
+    await this.sendText(target, "已请求停止当前 Codex 任务。");
   }
 
   private async handleProgressModeCommand(

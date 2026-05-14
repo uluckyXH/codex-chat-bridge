@@ -23,6 +23,7 @@ interface StartupOptions {
 interface PreparedCodexStartup {
   policy: CodexRunPolicy;
   sessionId?: string;
+  sessionTitle?: string;
   cwd: string;
 }
 
@@ -153,6 +154,7 @@ async function runTerminalBridge(mode: "mock" | "codex", options: StartupOptions
 
   await bridge.start();
   if (mode === "codex") {
+    printRuntimeSummary("终端 Codex 中间件", startup, options.progressMode);
     if (startup.sessionId) {
       await channel.emitText(`/resume ${startup.sessionId}`);
     } else {
@@ -179,12 +181,7 @@ async function runWeixinCodexBridge(options: StartupOptions = {}): Promise<void>
 
   await bridge.start();
   await ensureWeixinLoggedIn(channel);
-  if (startup.sessionId) {
-    console.log(`首个微信会话将绑定 Codex 会话: ${startup.sessionId}`);
-  } else {
-    console.log("首个微信会话将自动创建新的 Codex 会话。");
-  }
-  console.log("Weixin Codex 中间件已启动。按 Ctrl+C 停止。");
+  printRuntimeSummary("微信 Codex 中间件", startup, options.progressMode);
   await waitForShutdownSignal();
   await bridge.stop();
 }
@@ -230,21 +227,35 @@ async function prepareCodexStartup(options: StartupOptions): Promise<PreparedCod
   if (!status.available) {
     throw new Error(`Codex 不可用: ${status.error ?? "unknown error"}`);
   }
-  console.log(`Codex 可用: ${status.version ?? status.codexBin}`);
+  console.log("");
+  console.log("Codex 启动准备");
+  console.log(`- CLI: ${status.version ?? status.codexBin}`);
   const interactive = Boolean(stdin.isTTY && stdout.isTTY);
   const rl = interactive ? createInterface({ input: stdin, output: stdout }) : undefined;
   try {
-    const permissionMode = await resolvePermissionMode(options, rl);
-    const policy: CodexRunPolicy = {
-      permissionMode,
-      sandbox: permissionMode === "approval" ? "workspace-write" : undefined,
-    };
     const sessions = discoverCodexSessions({ limit: 10 });
     const sessionChoice = await resolveSessionChoice(options, rl, sessions);
     const cwd = sessionChoice.sessionId
       ? resolveExistingSessionCwd(sessionChoice, options.cwd)
       : await resolveStartupWorkdir(options, rl);
-    return { policy, sessionId: sessionChoice.sessionId, cwd };
+    const permissionMode = await resolvePermissionMode(options, rl);
+    const policy: CodexRunPolicy = {
+      permissionMode,
+      sandbox: permissionMode === "approval" ? "workspace-write" : undefined,
+    };
+    printStartupSelection({
+      sessionId: sessionChoice.sessionId,
+      sessionTitle: sessionChoice.session ? displayCodexSessionTitle(sessionChoice.session) : undefined,
+      cwd,
+      policy,
+      progressMode: options.progressMode,
+    });
+    return {
+      policy,
+      sessionId: sessionChoice.sessionId,
+      sessionTitle: sessionChoice.session ? displayCodexSessionTitle(sessionChoice.session) : undefined,
+      cwd,
+    };
   } finally {
     rl?.close();
   }
@@ -260,7 +271,8 @@ async function resolvePermissionMode(options: StartupOptions, rl?: Interface): P
   }
   if (options.permission === "approval") return "approval";
   if (!rl) return "approval";
-  console.log("Codex 权限模式:");
+  console.log("");
+  console.log("Codex 权限模式（作用于本次启动后的后续任务）");
   console.log("1. approval - 需要审批，sandbox=workspace-write");
   console.log("2. full - 完全权限，跳过审批和沙箱，非常危险");
   const answer = (await rl.question("请选择权限模式 [1]: ")).trim();
@@ -297,14 +309,11 @@ async function resolveSessionChoice(
     };
   }
   if (options.session === "new" || !rl) return {};
-  console.log("Codex 会话:");
+  console.log("");
+  console.log("Codex 会话");
   console.log("0. 创建新的会话记录");
   sessions.forEach((session, index) => {
-    const title = displayCodexSessionTitle(session);
-    const name = title ? ` ${title}` : "";
-    const cwd = session.cwd ? ` ${session.cwd}` : "";
-    const updated = session.updatedAt ? ` ${session.updatedAt}` : "";
-    console.log(`${index + 1}. ${session.id}${name}${updated}${cwd}`);
+    console.log(formatSessionChoice(index + 1, session));
   });
   const answer = (await rl.question("请选择会话 [0]: ")).trim();
   if (!answer || answer === "0" || answer.toLowerCase() === "new") return {};
@@ -322,6 +331,7 @@ async function resolveStartupWorkdir(options: StartupOptions, rl?: Interface): P
   const defaultCwd = process.cwd();
   let input = options.cwd;
   if (!input && rl) {
+    console.log("");
     console.log(`新 Codex 会话默认工作目录: ${defaultCwd}`);
     input = await rl.question("请输入新会话工作目录 [默认当前目录]: ");
   }
@@ -341,14 +351,64 @@ function resolveExistingSessionCwd(
     console.log("已选择已有 Codex 会话，启动参数 --cwd/--workdir 将被忽略。");
   }
   const cwd = choice.session?.cwd ?? process.cwd();
+  const title = choice.session ? displayCodexSessionTitle(choice.session) : undefined;
+  console.log("");
+  console.log("已选择已有 Codex 会话");
+  console.log(`- Session: ${choice.sessionId}`);
+  if (title) console.log(`- 标题: ${title}`);
   if (choice.session?.cwd) {
-    console.log(`已选择已有 Codex 会话: ${choice.sessionId}`);
-    console.log(`会话历史工作目录: ${cwd}`);
+    console.log(`- 工作目录: ${cwd}`);
   } else {
-    console.log(`已选择已有 Codex 会话: ${choice.sessionId}`);
-    console.log(`未在 Codex 历史记录中找到工作目录，暂用当前目录兜底: ${cwd}`);
+    console.log(`- 工作目录: ${cwd}（历史记录未提供，暂用当前目录）`);
   }
   return cwd;
+}
+
+function printStartupSelection(params: {
+  sessionId?: string;
+  sessionTitle?: string;
+  cwd: string;
+  policy: CodexRunPolicy;
+  progressMode?: ProgressDeliveryMode;
+}): void {
+  console.log("");
+  console.log("启动选择");
+  console.log(`- 会话: ${params.sessionId ? `恢复 ${params.sessionId}` : "新建"}`);
+  if (params.sessionTitle) console.log(`- 标题: ${params.sessionTitle}`);
+  console.log(`- 工作目录: ${params.cwd}`);
+  console.log(`- 权限: ${formatPolicyForCli(params.policy)}`);
+  console.log(`- 进度: ${params.progressMode ?? "brief"}`);
+}
+
+function printRuntimeSummary(
+  title: string,
+  startup: PreparedCodexStartup | { policy?: CodexRunPolicy; sessionId?: string; sessionTitle?: string; cwd: string },
+  progressMode?: ProgressDeliveryMode,
+): void {
+  console.log("");
+  console.log(`${title}已启动`);
+  console.log(`- 会话: ${startup.sessionId ? `首个聊天绑定 ${startup.sessionId}` : "首条消息自动新建"}`);
+  if (startup.sessionTitle) console.log(`- 标题: ${startup.sessionTitle}`);
+  console.log(`- 工作目录: ${startup.cwd}`);
+  if (startup.policy) console.log(`- 权限: ${formatPolicyForCli(startup.policy)}`);
+  console.log(`- 进度: ${progressMode ?? "brief"}`);
+  console.log("- 退出: Ctrl+C");
+}
+
+function formatSessionChoice(index: number, session: DiscoveredCodexSession): string {
+  const title = displayCodexSessionTitle(session);
+  const parts = [`${index}. ${title ?? session.id}`];
+  parts.push(`   id: ${session.id}`);
+  if (session.updatedAt) parts.push(`   updated: ${session.updatedAt}`);
+  if (session.cwd) parts.push(`   cwd: ${session.cwd}`);
+  return parts.join("\n");
+}
+
+function formatPolicyForCli(policy: CodexRunPolicy): string {
+  if (policy.permissionMode === "full") {
+    return "full（跳过审批和沙箱）";
+  }
+  return `approval（sandbox=${policy.sandbox ?? "workspace-write"}）`;
 }
 
 function printHelp(): void {

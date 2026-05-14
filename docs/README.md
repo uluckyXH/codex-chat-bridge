@@ -77,7 +77,7 @@ npm run cli:terminal:mock
 npm run cli:terminal:codex
 ```
 
-其中 `cli:terminal:mock` 是本地终端通道加 MockCodex，作用是模拟微信消息进入中间件；`cli:terminal:codex` 会先检测真实 Codex CLI，然后让用户选择会话和权限模式，再通过 `codex exec --json` 与真实 Codex 通信。
+其中 `cli:terminal:mock` 是本地终端通道加 MockCodex，作用是模拟微信消息进入中间件；`cli:terminal:codex` 会先检测真实 Codex CLI，然后让用户先选择会话、再选择权限模式，最后通过 `codex exec --json` 与真实 Codex 通信。
 
 真实 Codex 模式在创建新会话时会展示默认工作目录，用户可输入其他目录；目录不存在时会自动创建。选择历史会话时不询问新工作目录，而是使用 Codex 历史 session 元数据里的原工作目录。
 
