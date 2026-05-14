@@ -7,7 +7,7 @@
 - 第三方 Git 源码仓库统一放在 `references/<repo-name>/`，例如 `references/openclaw-lark/`、`references/openai-codex/`。
 - 只有 npm 包、没有必要直接使用 Git 仓库时，下载和解包目录放在项目根目录的 `<package>-npm/`，例如 `openclaw-weixin-npm/`。
 - `references/` 下除本 README 外的内容全部被 Git 忽略。
-- `openclaw-weixin-npm/` 被 Git 忽略。
+- `openclaw-weixin-npm/` 和 `openclaw-lark-npm/` 被 Git 忽略。
 - 不下载完整 OpenClaw 源码；只下载需要参考的通讯渠道插件源码或插件 npm 包。
 
 ## 微信插件源码
@@ -95,5 +95,5 @@ git clone --depth 1 --filter=blob:none https://github.com/openai/codex.git refer
 ## 提交规则
 
 - `references/` 下除本 README 外的内容不提交。
-- `openclaw-weixin-npm/` 不提交。
+- `openclaw-weixin-npm/` 和 `openclaw-lark-npm/` 不提交。
 - 不提交 npm tarball、解包源码、第三方源码仓库或运行态文件。

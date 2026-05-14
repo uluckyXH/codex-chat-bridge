@@ -25,6 +25,7 @@ logs/
 weixin-state/
 
 # Local reference package downloads and extracts
+openclaw-lark-npm/
 openclaw-weixin-npm/
 
 # Local reference source checkouts are kept locally, not committed.
