@@ -348,7 +348,8 @@ Codex 状态：
 **Codex 状态**
 - Session: `cdx-8f2a`
 - State: `running turn=exec-turn-123 task=processing your last message`
-- Context: `12,345 / 200,000 tokens` (6.2%, remaining 187,655) last turn `789 tokens`
+- Model: `gpt-5.1-codex` provider=`openai`
+- Context: `164,171 / 258,400 tokens` (63.5%, remaining 94,229) (last input 160,000, cached 120,000, output 4,171, reasoning 1,200) total usage `34,375,973 tokens`
 - Cwd: `codex-openclaw-wechat`
 
 **Bridge**
@@ -370,7 +371,8 @@ Codex 状态：
 **Codex 状态**
 - Session: `cdx-8f2a`
 - State: `running`
-- Context: `12,345 / 200,000 tokens` (6.2%, remaining 187,655) last turn `789 tokens`
+- Model: `gpt-5.1-codex` provider=`openai`
+- Context: `164,171 / 258,400 tokens` (63.5%, remaining 94,229) (last input 160,000, cached 120,000, output 4,171, reasoning 1,200) total usage `34,375,973 tokens`
 - Cwd: `codex-openclaw-wechat`
 
 **Bridge**

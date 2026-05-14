@@ -308,6 +308,8 @@ test("AppServerCodexAdapter records thread token usage updates", async () => {
   assert.equal(status.context?.total.totalTokens, 12345);
   assert.equal(status.context?.last.totalTokens, 789);
   assert.equal(status.context?.modelContextWindow, 200000);
+  assert.equal(status.model?.model, "fake");
+  assert.equal(status.model?.provider, "openai");
 });
 
 test("AppServerCodexAdapter keeps network available in approval workspace sandbox", async () => {

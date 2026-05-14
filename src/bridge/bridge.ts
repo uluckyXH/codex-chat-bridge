@@ -1,7 +1,7 @@
 import type { ApprovalDecision } from "../approvals/types.js";
 import { ApprovalManager } from "../approvals/approval-manager.js";
 import type { CodexRunPolicy, CodexRunPolicyStatus } from "../codex/codex-cli.js";
-import type { CodexAdapter, CodexProgressKind, CodexSession, CodexSessionContextUsage, CodexSessionStatus } from "../codex/types.js";
+import type { CodexAdapter, CodexProgressKind, CodexSession, CodexSessionContextUsage, CodexSessionModelInfo, CodexSessionStatus } from "../codex/types.js";
 import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
 import { SilentLogger } from "../logging/logger.js";
@@ -546,6 +546,7 @@ export class Bridge {
       "**Codex 状态**",
       `- Session: \`${binding?.sessionId ?? "none"}\``,
       `- State: \`${formatCodexStatus(sessionStatus)}\``,
+      `- Model: ${formatModelInfo(sessionStatus.model)}`,
       `- Context: ${formatContextUsage(sessionStatus.context)}`,
       binding ? `- Cwd: \`${localSession?.session.cwd ?? "unknown"}\`` : undefined,
       "",
@@ -722,16 +723,26 @@ function formatApprovalSupport(status: CodexRunPolicyStatus): string {
 
 function formatContextUsage(context: CodexSessionContextUsage | undefined): string {
   if (!context) return "`unavailable`";
-  const total = context.total.totalTokens;
+  const current = context.last.totalTokens;
   const window = context.modelContextWindow;
   const usage = window && window > 0
-    ? `\`${formatNumber(total)} / ${formatNumber(window)} tokens\` (${formatPercent(total / window)}, remaining ${formatNumber(Math.max(window - total, 0))})`
-    : `\`${formatNumber(total)} tokens\``;
+    ? `\`${formatNumber(current)} / ${formatNumber(window)} tokens\` (${formatPercent(current / window)}, remaining ${formatNumber(Math.max(window - current, 0))})`
+    : `\`${formatNumber(current)} tokens\``;
   return [
     usage,
-    `last turn \`${formatNumber(context.last.totalTokens)} tokens\``,
-    `(input ${formatNumber(context.total.inputTokens)}, cached ${formatNumber(context.total.cachedInputTokens)}, output ${formatNumber(context.total.outputTokens)}, reasoning ${formatNumber(context.total.reasoningOutputTokens)})`,
+    `(last input ${formatNumber(context.last.inputTokens)}, cached ${formatNumber(context.last.cachedInputTokens)}, output ${formatNumber(context.last.outputTokens)}, reasoning ${formatNumber(context.last.reasoningOutputTokens)})`,
+    `total usage \`${formatNumber(context.total.totalTokens)} tokens\``,
   ].join(" ");
+}
+
+function formatModelInfo(model: CodexSessionModelInfo | undefined): string {
+  if (!model?.model && !model?.provider && !model?.serviceTier) return "`unknown`";
+  const parts = [
+    model.model ? `\`${model.model}\`` : undefined,
+    model.provider ? `provider=\`${model.provider}\`` : undefined,
+    model.serviceTier ? `tier=\`${model.serviceTier}\`` : undefined,
+  ].filter(Boolean);
+  return parts.join(" ");
 }
 
 function formatNumber(value: number): string {

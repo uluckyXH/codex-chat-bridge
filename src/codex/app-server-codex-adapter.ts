@@ -11,6 +11,7 @@ import type {
   CodexSession,
   CodexSessionBaseStatus,
   CodexSessionContextUsage,
+  CodexSessionModelInfo,
   CodexSessionStatus,
   CodexSessionSummary,
   StartSessionInput,
@@ -150,10 +151,11 @@ export class AppServerCodexAdapter implements CodexAdapter {
       title: input.title ?? stringValue(thread.name) ?? stringValue(thread.preview) ?? `codex:${threadId}`,
       createdAt: isoFromSeconds(numberValue(thread.createdAt)) ?? new Date().toISOString(),
     };
+    const model = modelInfoFromResponse(response, thread);
     this.sessions.set(session.id, {
       session,
       routeKey: input.routeKey,
-      status: { type: "idle" },
+      status: { type: "idle", ...(model ? { model } : {}) },
       updatedAt: new Date().toISOString(),
     });
     this.sessionRunPolicies.set(session.id, cloneRunPolicy(this.defaultRunPolicy));
@@ -181,9 +183,10 @@ export class AppServerCodexAdapter implements CodexAdapter {
       title: stringValue(thread.name) ?? (discovered ? displayCodexSessionTitle(discovered) : undefined) ?? `codex:${sessionId}`,
       createdAt: isoFromSeconds(numberValue(thread.createdAt)) ?? discovered?.updatedAt ?? new Date().toISOString(),
     };
+    const model = modelInfoFromResponse(response, thread);
     this.sessions.set(session.id, {
       session,
-      status: { type: "idle" },
+      status: { type: "idle", ...(model ? { model } : {}) },
       updatedAt: new Date().toISOString(),
     });
     if (!this.sessionRunPolicies.has(session.id)) {
@@ -876,7 +879,26 @@ function responseForApprovalDecision(method: string, params: Record<string, unkn
 }
 
 function withContext(record: AppServerSessionRecord, status: CodexSessionBaseStatus): CodexSessionStatus {
-  return record.status.context ? { ...status, context: record.status.context } : status;
+  return {
+    ...status,
+    ...(record.status.context ? { context: record.status.context } : {}),
+    ...(record.status.model ? { model: record.status.model } : {}),
+  };
+}
+
+function modelInfoFromResponse(
+  response: Record<string, unknown>,
+  thread: Record<string, unknown>,
+): CodexSessionModelInfo | undefined {
+  const model = stringValue(response.model);
+  const provider = stringValue(response.modelProvider) ?? stringValue(thread.modelProvider);
+  const serviceTier = stringValue(response.serviceTier) ?? null;
+  if (!model && !provider && !serviceTier) return undefined;
+  return {
+    ...(model ? { model } : {}),
+    ...(provider ? { provider } : {}),
+    ...(serviceTier ? { serviceTier } : {}),
+  };
 }
 
 function parseTokenUsage(value: Record<string, unknown>): CodexSessionContextUsage | undefined {

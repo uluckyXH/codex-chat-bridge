@@ -63,25 +63,25 @@ class AdapterApprovalIdCodexAdapter extends MockCodexAdapter {
 class ContextUsageCodexAdapter extends MockCodexAdapter {
   private readonly context: CodexSessionContextUsage = {
     total: {
-      totalTokens: 12345,
-      inputTokens: 10000,
-      cachedInputTokens: 4000,
-      outputTokens: 2345,
-      reasoningOutputTokens: 345,
+      totalTokens: 34375973,
+      inputTokens: 34282029,
+      cachedInputTokens: 33213184,
+      outputTokens: 93944,
+      reasoningOutputTokens: 30181,
     },
     last: {
-      totalTokens: 789,
-      inputTokens: 600,
-      cachedInputTokens: 200,
-      outputTokens: 189,
-      reasoningOutputTokens: 89,
+      totalTokens: 164171,
+      inputTokens: 160000,
+      cachedInputTokens: 120000,
+      outputTokens: 4171,
+      reasoningOutputTokens: 1200,
     },
-    modelContextWindow: 200000,
+    modelContextWindow: 258400,
   };
 
   override async getStatus(sessionId: string): Promise<CodexSessionStatus> {
     const status = await super.getStatus(sessionId);
-    return { ...status, context: this.context };
+    return { ...status, context: this.context, model: { model: "gpt-test", provider: "openai", serviceTier: "default" } };
   }
 }
 
@@ -234,7 +234,10 @@ test("Bridge status includes session token context without channel identity deta
   const statusMessage = channel.sentMessages.at(-1)?.text ?? "";
   assert.match(statusMessage, /\*\*Codex 状态\*\*/);
   assert.match(statusMessage, /Session: `mock-codex-1`/);
-  assert.match(statusMessage, /Context: `12,345 \/ 200,000 tokens` \(6\.2%, remaining 187,655\) last turn `789 tokens`/);
+  assert.match(statusMessage, /Model: `gpt-test` provider=`openai` tier=`default`/);
+  assert.match(statusMessage, /Context: `164,171 \/ 258,400 tokens` \(63\.5%, remaining 94,229\)/);
+  assert.match(statusMessage, /total usage `34,375,973 tokens`/);
+  assert.doesNotMatch(statusMessage, /13303\.4%/);
   assert.doesNotMatch(statusMessage, /mock:mock-account:direct:project-room/);
   assert.doesNotMatch(statusMessage, /Mock User \(alice\)/);
 });

@@ -24,6 +24,12 @@ export interface CodexSessionContextUsage {
   modelContextWindow?: number | null;
 }
 
+export interface CodexSessionModelInfo {
+  model?: string;
+  provider?: string;
+  serviceTier?: string | null;
+}
+
 export type CodexSessionBaseStatus =
   | { type: "idle" }
   | { type: "running"; task?: string; turnId?: string }
@@ -32,7 +38,10 @@ export type CodexSessionBaseStatus =
   | { type: "failed"; error: string }
   | { type: "unknown"; detail?: string };
 
-export type CodexSessionStatus = CodexSessionBaseStatus & { context?: CodexSessionContextUsage };
+export type CodexSessionStatus = CodexSessionBaseStatus & {
+  context?: CodexSessionContextUsage;
+  model?: CodexSessionModelInfo;
+};
 
 export type CodexEvent =
   | { type: "turn.started"; sessionId: string; turnId: string }
