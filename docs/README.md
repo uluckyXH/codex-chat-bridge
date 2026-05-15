@@ -16,6 +16,9 @@
 - `development-and-test.zh-CN.md`
   中文开发与测试规范。说明代码分层、质量要求、每个功能的自测要求、测试报告目录和报告格式。
 
+- `agent-guide.zh-CN.md`
+  Agent 开发指南。由旧版根 README 拆出，面向 coding agent，汇总阅读顺序、核心规则、目录边界、模块拆分、测试和提交要求。
+
 - `git-management.zh-CN.md`
   中文 Git 管理规范。说明仓库边界、忽略规则、本地参考仓库和提交要求。
 
@@ -28,8 +31,8 @@
 - `requirements.md`
   早期英文需求草稿。保留作参考，不作为当前主设计依据。
 
-- `../README.zh-CN.md` 和 `../README.en.md`
-  项目根目录的中英文 README，面向快速启动、命令说明和当前状态。
+- `../README.md` 和 `../README.en.md`
+  项目根目录的默认简体中文 README 和英文 README，面向快速启动、命令说明、技术架构、项目结构和当前状态。
 
 ## 当前项目定位
 
@@ -62,9 +65,11 @@ Codex <-> Middleware Core <-> WeixinAdapter <-> openclaw-weixin extracted commun
 1. 读 `requirements.zh-CN.md`，确认项目目标和边界。
 2. 读 `technical-design.zh-CN.md`，确认架构和分阶段路线。
 3. 读 `channel-delivery-policy.zh-CN.md`，确认不同渠道的消息投递策略边界。
-4. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
-5. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
-6. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
+4. 读 `multi-channel-design.zh-CN.md`，确认多渠道 route/session 绑定、并发和配置交互设计。
+5. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
+6. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
+7. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
+8. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
 
 ## 分阶段工作顺序
 
