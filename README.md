@@ -1,3 +1,5 @@
+> LINUX DO 讨论：[https://linux.do/t/topic/2183744](https://linux.do/t/topic/2183744)
+
 # Codex Chat Bridge
 
 Codex Chat Bridge 是一个轻量的 Codex 聊天渠道中间件。它把聊天消息统一转换成中间件协议，再路由到对应的 Codex session，让用户可以在微信里创建会话、发送任务、处理审批、停止任务、查看状态和接收结果。
