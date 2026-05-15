@@ -5,6 +5,7 @@ import { Bridge, parseProgressDeliveryMode, type ProgressDeliveryMode } from "./
 import { MockChannelAdapter } from "./channels/mock/mock-channel-adapter.js";
 import { TerminalChannelAdapter } from "./channels/terminal/terminal-channel-adapter.js";
 import { WeixinAdapter } from "./channels/weixin/weixin-adapter.js";
+import { displayWeixinQrCode } from "./channels/weixin/weixin-qr-display.js";
 import { checkCodexCli, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
 import { AppServerCodexAdapter } from "./codex/app-server-codex-adapter.js";
 import { ExecCodexAdapter } from "./codex/exec-codex-adapter.js";
@@ -67,7 +68,7 @@ async function main(argv: string[]): Promise<void> {
     const started = await adapter.startLogin();
     console.log(started.message);
     if (started.qrCodeText) {
-      console.log(started.qrCodeText);
+      await displayWeixinQrCode(started.qrCodeText);
     }
     const result = await adapter.waitLogin(started.sessionKey);
     console.log(result.message);
@@ -208,7 +209,7 @@ async function ensureWeixinLoggedIn(channel: WeixinAdapter): Promise<void> {
   const started = await channel.startLogin();
   console.log(started.message);
   if (started.qrCodeText) {
-    console.log(started.qrCodeText);
+    await displayWeixinQrCode(started.qrCodeText);
   }
   const loginResult = await channel.waitLogin(started.sessionKey);
   console.log(loginResult.message);
@@ -468,7 +469,7 @@ function printHelp(): void {
     "    --progress brief|detailed|silent 设置默认进度投递模式（微信渠道固定禁用）",
     "  codex-wechat-bridge weixin codex   启动真实微信通道 + Codex app-server",
     "  codex-wechat-bridge weixin status  查看 WeixinAdapter 当前状态",
-    "  codex-wechat-bridge weixin login   显示第二阶段登录提示",
+    "  codex-wechat-bridge weixin login   显示终端二维码并等待微信扫码登录",
     "  codex-wechat-bridge start          当前等同 terminal mock",
   ].join("\n"));
 }

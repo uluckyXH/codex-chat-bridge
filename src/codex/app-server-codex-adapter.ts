@@ -5,7 +5,10 @@ import { randomUUID } from "node:crypto";
 import type { ApprovalDecision, ApprovalKind, ApprovalRequest } from "../approvals/types.js";
 import type {
   CodexAdapter,
+  CodexCollaborationMode,
   CodexEvent,
+  CodexGoal,
+  CodexGoalStatus,
   CodexModelListOptions,
   CodexModelOption,
   CodexModelPolicy,
@@ -20,6 +23,7 @@ import type {
   CodexSessionModelInfo,
   CodexSessionStatus,
   CodexSessionSummary,
+  CodexRunOptions,
   StartSessionInput,
 } from "./types.js";
 import { CODEX_REASONING_EFFORTS } from "./types.js";
@@ -77,6 +81,7 @@ interface TurnQueueRecord {
   sessionId: string;
   turnId: string;
   queue: AsyncEventQueue<CodexEvent>;
+  collaborationMode?: CodexCollaborationMode;
   finalText: string;
   progressDrafts: Map<string, ProgressDraft>;
   agentMessagePhases: Map<string, "commentary" | "final_answer">;
@@ -97,6 +102,8 @@ export class AppServerCodexAdapter implements CodexAdapter {
   private readonly sessionRunPolicies = new Map<string, CodexRunPolicy>();
   private defaultModelPolicy: CodexModelPolicy = {};
   private readonly sessionModelPolicies = new Map<string, CodexModelPolicy>();
+  private defaultCollaborationMode: CodexCollaborationMode = "default";
+  private readonly sessionCollaborationModes = new Map<string, CodexCollaborationMode>();
   private readonly codexHome?: string;
   private readonly requestTimeoutMs: number;
   private readonly interruptTimeoutMs: number;
@@ -175,6 +182,9 @@ export class AppServerCodexAdapter implements CodexAdapter {
     });
     this.sessionRunPolicies.set(session.id, cloneRunPolicy(this.defaultRunPolicy));
     this.sessionModelPolicies.set(session.id, modelPolicy);
+    if (this.defaultCollaborationMode !== "default") {
+      this.sessionCollaborationModes.set(session.id, this.defaultCollaborationMode);
+    }
     this.threadToSession.set(threadId, session.id);
     return session;
   }
@@ -216,16 +226,20 @@ export class AppServerCodexAdapter implements CodexAdapter {
     if (!this.sessionModelPolicies.has(session.id)) {
       this.sessionModelPolicies.set(session.id, modelPolicy);
     }
+    if (!this.sessionCollaborationModes.has(session.id) && this.defaultCollaborationMode !== "default") {
+      this.sessionCollaborationModes.set(session.id, this.defaultCollaborationMode);
+    }
     this.threadToSession.set(sessionId, session.id);
     return session;
   }
 
-  async *run(sessionId: string, prompt: string): AsyncIterable<CodexEvent> {
+  async *run(sessionId: string, prompt: string, options: CodexRunOptions = {}): AsyncIterable<CodexEvent> {
     const stored = this.sessions.get(sessionId);
     if (!stored) throw new Error(`app-server session not found locally: ${sessionId}`);
     await this.ensureStarted();
     const runPolicy = this.runPolicyForSession(sessionId);
     const modelPolicy = this.modelPolicyForSession(sessionId);
+    const collaborationMode = options.collaborationMode ?? this.sessionCollaborationModes.get(sessionId);
     const turnResponse = await this.request<Record<string, unknown>>("turn/start", {
       threadId: sessionId,
       input: [{ type: "text", text: prompt, text_elements: [] }],
@@ -236,6 +250,9 @@ export class AppServerCodexAdapter implements CodexAdapter {
       model: modelPolicy.model,
       serviceTier: modelPolicy.serviceTier,
       effort: modelPolicy.reasoningEffort,
+      collaborationMode: collaborationMode
+        ? collaborationModePayload(collaborationMode, modelPolicy, stored)
+        : undefined,
     });
     const turn = objectValue(turnResponse.turn);
     const turnId = stringValue(turn.id) ?? `app-server-turn-${Date.now()}`;
@@ -245,6 +262,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
       sessionId,
       turnId,
       queue,
+      ...(collaborationMode ? { collaborationMode } : {}),
       finalText: "",
       progressDrafts: new Map(),
       agentMessagePhases: new Map(),
@@ -383,12 +401,68 @@ export class AppServerCodexAdapter implements CodexAdapter {
     this.defaultModelPolicy = next;
   }
 
+  getCollaborationMode(sessionId?: string): CodexCollaborationMode {
+    return (sessionId ? this.sessionCollaborationModes.get(sessionId) : undefined) ?? this.defaultCollaborationMode;
+  }
+
+  setCollaborationMode(mode: CodexCollaborationMode, sessionId?: string): void {
+    if (sessionId) {
+      this.sessionCollaborationModes.set(sessionId, mode);
+      return;
+    }
+    this.defaultCollaborationMode = mode;
+  }
+
+  async getGoal(sessionId: string): Promise<CodexGoal | null> {
+    await this.ensureStarted();
+    this.ensureKnownSession(sessionId);
+    const response = await this.request<Record<string, unknown>>("thread/goal/get", {
+      threadId: sessionId,
+    });
+    const goal = objectValueOrNull(response.goal);
+    return goal ? goalFromResponse(goal) : null;
+  }
+
+  async setGoal(sessionId: string, objective: string): Promise<CodexGoal> {
+    await this.ensureStarted();
+    this.ensureKnownSession(sessionId);
+    const response = await this.request<Record<string, unknown>>("thread/goal/set", {
+      threadId: sessionId,
+      objective,
+      status: "active",
+    });
+    return goalFromSetResponse(response);
+  }
+
+  async setGoalStatus(sessionId: string, status: CodexGoalStatus): Promise<CodexGoal> {
+    await this.ensureStarted();
+    this.ensureKnownSession(sessionId);
+    const response = await this.request<Record<string, unknown>>("thread/goal/set", {
+      threadId: sessionId,
+      status,
+    });
+    return goalFromSetResponse(response);
+  }
+
+  async clearGoal(sessionId: string): Promise<boolean> {
+    await this.ensureStarted();
+    this.ensureKnownSession(sessionId);
+    const response = await this.request<Record<string, unknown>>("thread/goal/clear", {
+      threadId: sessionId,
+    });
+    return Boolean(response.cleared);
+  }
+
   private runPolicyForSession(sessionId?: string): CodexRunPolicy {
     return (sessionId ? this.sessionRunPolicies.get(sessionId) : undefined) ?? this.defaultRunPolicy;
   }
 
   private modelPolicyForSession(sessionId?: string): CodexModelPolicy {
     return (sessionId ? this.sessionModelPolicies.get(sessionId) : undefined) ?? this.defaultModelPolicy;
+  }
+
+  private ensureKnownSession(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) throw new Error(`app-server session not found locally: ${sessionId}`);
   }
 
   private ensureStarted(): Promise<void> {
@@ -773,9 +847,14 @@ export class AppServerCodexAdapter implements CodexAdapter {
       return;
     }
     if (itemType === "plan") {
-      if (itemId && turn.emittedProgressItemIds.has(itemId)) return;
+      const alreadyEmittedProgress = Boolean(itemId && turn.emittedProgressItemIds.has(itemId));
       const text = stringValue(item.text);
-      if (text) this.pushProgressEvent(turn, sessionId, turnId, `计划更新: ${text}`, "todo");
+      if (text) {
+        if (!alreadyEmittedProgress) this.pushProgressEvent(turn, sessionId, turnId, `计划更新: ${text}`, "todo");
+        if (turn.collaborationMode === "plan") {
+          this.pushTurnEvent(turnId, { type: "assistant.plan", sessionId, turnId, text });
+        }
+      }
       return;
     }
     const progress = progressFromThreadItem(item);
@@ -909,6 +988,32 @@ function cloneModelPolicy(policy: CodexModelPolicy): CodexModelPolicy {
   return { ...policy };
 }
 
+function goalFromSetResponse(response: Record<string, unknown>): CodexGoal {
+  const goal = objectValueOrNull(response.goal);
+  if (!goal) throw new Error("codex app-server 未返回 Goal。");
+  return goalFromResponse(goal);
+}
+
+function goalFromResponse(value: Record<string, unknown>): CodexGoal {
+  return {
+    threadId: stringValue(value.threadId) ?? stringValue(value.thread_id) ?? "unknown-thread",
+    objective: stringValue(value.objective) ?? "",
+    status: goalStatusValue(value.status),
+    tokenBudget: numberValue(value.tokenBudget ?? value.token_budget) ?? null,
+    tokensUsed: numberValue(value.tokensUsed ?? value.tokens_used) ?? 0,
+    timeUsedSeconds: numberValue(value.timeUsedSeconds ?? value.time_used_seconds) ?? 0,
+    createdAt: numberValue(value.createdAt ?? value.created_at) ?? 0,
+    updatedAt: numberValue(value.updatedAt ?? value.updated_at) ?? 0,
+  };
+}
+
+function goalStatusValue(value: unknown): CodexGoalStatus {
+  if (value === "active" || value === "paused" || value === "budgetLimited" || value === "complete") {
+    return value;
+  }
+  return "active";
+}
+
 function approvalsReviewerForRunPolicy(policy: CodexRunPolicy): "user" | null {
   return policy.permissionMode === "full" ? null : "user";
 }
@@ -963,6 +1068,28 @@ function withModelPolicy(status: CodexSessionStatus, policy: CodexModelPolicy): 
   return {
     ...status,
     ...(model ? { model } : {}),
+  };
+}
+
+function collaborationModePayload(
+  mode: CodexCollaborationMode,
+  policy: CodexModelPolicy,
+  stored: AppServerSessionRecord,
+): Record<string, unknown> {
+  const model = policy.model ?? stored.status.model?.model ?? stored.baseModel?.model;
+  if (!model) {
+    throw new Error("无法切换 Codex 协作模式：缺少当前模型信息。");
+  }
+  const reasoningEffort = mode === "plan"
+    ? "medium"
+    : policy.reasoningEffort ?? stored.status.model?.reasoningEffort ?? stored.baseModel?.reasoningEffort ?? null;
+  return {
+    mode,
+    settings: {
+      model,
+      reasoning_effort: reasoningEffort,
+      developer_instructions: null,
+    },
   };
 }
 
@@ -1185,6 +1312,10 @@ function isTransientAppServerError(message: string): boolean {
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function objectValueOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function arrayValue(value: unknown): unknown[] {

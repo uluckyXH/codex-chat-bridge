@@ -1,7 +1,10 @@
 import type { ApprovalDecision } from "../approvals/types.js";
 import type {
   CodexAdapter,
+  CodexCollaborationMode,
   CodexEvent,
+  CodexGoal,
+  CodexGoalStatus,
   CodexModelListOptions,
   CodexModelOption,
   CodexModelPolicy,
@@ -12,6 +15,7 @@ import type {
   CodexSessionModelInfo,
   CodexSessionStatus,
   CodexSessionSummary,
+  CodexRunOptions,
   StartSessionInput,
 } from "./types.js";
 
@@ -21,8 +25,12 @@ export class MockCodexAdapter implements CodexAdapter {
   private readonly sessionRunPolicies = new Map<string, CodexRunPolicy>();
   private defaultModelPolicy: CodexModelPolicy = {};
   private readonly sessionModelPolicies = new Map<string, CodexModelPolicy>();
+  private defaultCollaborationMode: CodexCollaborationMode = "default";
+  private readonly sessionCollaborationModes = new Map<string, CodexCollaborationMode>();
+  private readonly sessionGoals = new Map<string, CodexGoal>();
   private readonly sessions = new Map<string, { session: CodexSession; routeKey: string; status: CodexSessionStatus }>();
   readonly resolvedApprovals: Array<{ approvalKey: string; decision: ApprovalDecision }> = [];
+  readonly runs: Array<{ sessionId: string; prompt: string; collaborationMode?: CodexCollaborationMode }> = [];
 
   async startSession(input: StartSessionInput): Promise<CodexSession> {
     this.sequence += 1;
@@ -36,6 +44,9 @@ export class MockCodexAdapter implements CodexAdapter {
     this.sessions.set(session.id, { session, routeKey: input.routeKey, status: this.withModelInfo({ type: "idle" }, modelPolicy) });
     this.sessionRunPolicies.set(session.id, { ...this.defaultRunPolicy });
     this.sessionModelPolicies.set(session.id, modelPolicy);
+    if (this.defaultCollaborationMode !== "default") {
+      this.sessionCollaborationModes.set(session.id, this.defaultCollaborationMode);
+    }
     return session;
   }
 
@@ -45,9 +56,10 @@ export class MockCodexAdapter implements CodexAdapter {
     return stored.session;
   }
 
-  async *run(sessionId: string, prompt: string): AsyncIterable<CodexEvent> {
+  async *run(sessionId: string, prompt: string, options: CodexRunOptions = {}): AsyncIterable<CodexEvent> {
     const stored = this.sessions.get(sessionId);
     if (!stored) throw new Error(`mock session not found: ${sessionId}`);
+    this.runs.push({ sessionId, prompt, collaborationMode: options.collaborationMode });
     const turnId = `turn-${Date.now()}`;
     stored.status = this.withModelInfo({ type: "running", turnId }, this.modelPolicyForSession(sessionId));
     yield { type: "turn.started", sessionId, turnId };
@@ -146,6 +158,56 @@ export class MockCodexAdapter implements CodexAdapter {
     this.defaultModelPolicy = next;
   }
 
+  getCollaborationMode(sessionId?: string): CodexCollaborationMode {
+    return (sessionId ? this.sessionCollaborationModes.get(sessionId) : undefined) ?? this.defaultCollaborationMode;
+  }
+
+  setCollaborationMode(mode: CodexCollaborationMode, sessionId?: string): void {
+    if (sessionId) {
+      this.sessionCollaborationModes.set(sessionId, mode);
+      return;
+    }
+    this.defaultCollaborationMode = mode;
+  }
+
+  async getGoal(sessionId: string): Promise<CodexGoal | null> {
+    return this.sessionGoals.get(sessionId) ?? null;
+  }
+
+  async setGoal(sessionId: string, objective: string): Promise<CodexGoal> {
+    this.ensureKnownSession(sessionId);
+    const existing = this.sessionGoals.get(sessionId);
+    const now = Date.now() / 1000;
+    const goal: CodexGoal = {
+      threadId: sessionId,
+      objective,
+      status: "active",
+      tokenBudget: existing?.tokenBudget ?? null,
+      tokensUsed: existing?.tokensUsed ?? 0,
+      timeUsedSeconds: existing?.timeUsedSeconds ?? 0,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.sessionGoals.set(sessionId, goal);
+    return goal;
+  }
+
+  async setGoalStatus(sessionId: string, status: CodexGoalStatus): Promise<CodexGoal> {
+    const existing = this.sessionGoals.get(sessionId);
+    if (!existing) throw new Error("当前会话没有 Goal。");
+    const goal = {
+      ...existing,
+      status,
+      updatedAt: Date.now() / 1000,
+    };
+    this.sessionGoals.set(sessionId, goal);
+    return goal;
+  }
+
+  async clearGoal(sessionId: string): Promise<boolean> {
+    return this.sessionGoals.delete(sessionId);
+  }
+
   private runPolicyForSession(sessionId?: string): CodexRunPolicy {
     return (sessionId ? this.sessionRunPolicies.get(sessionId) : undefined) ?? this.defaultRunPolicy;
   }
@@ -161,6 +223,10 @@ export class MockCodexAdapter implements CodexAdapter {
       ...status,
       model: modelInfoForPolicy(policy),
     };
+  }
+
+  private ensureKnownSession(sessionId: string): void {
+    if (!this.sessions.has(sessionId)) throw new Error(`mock session not found: ${sessionId}`);
   }
 }
 

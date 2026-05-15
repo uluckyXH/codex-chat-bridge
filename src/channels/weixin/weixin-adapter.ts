@@ -218,7 +218,7 @@ export class WeixinAdapter implements ChannelAdapter {
     };
     return {
       state: "login_required",
-      message: "请用手机微信扫描二维码链接完成登录。",
+      message: "请用手机微信扫描二维码完成登录。",
       qrCodeText: qr.qrcode_img_content,
       sessionKey,
       details: { sessionKey },

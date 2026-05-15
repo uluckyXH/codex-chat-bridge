@@ -76,6 +76,7 @@ WeixinAdapter 返回微信专属策略：
 微信仍发送关键消息：
 
 - final answer
+- Plan mode final plan
 - error / turn failed
 - approval request
 - approval result
@@ -88,7 +89,7 @@ WeixinAdapter 返回微信专属策略：
 Bridge 只读取策略，不判断具体渠道名：
 
 - `taskStart === "send"` 时发送任务开始提示。
-- `progress === "suppress"` 时丢弃 `assistant.progress`。
+- `progress === "suppress"` 时不向聊天渠道投递 `assistant.progress`；如果启动入口配置了 transcript sink，可在本地终端记录为“本地进度（未投递）”。
 - `progressCommand === "disabled"` 时拒绝 `/progress`。
 - `refreshCommands` 命中时按策略静默处理或回复。
 - `/help` 根据策略隐藏 `/progress` 并追加 refresh 命令。

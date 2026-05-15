@@ -12,11 +12,13 @@ This project is OpenClaw-free at runtime. It must not depend on OpenClaw CLI, Op
 - Mock, Terminal, and Weixin channel adapters are implemented.
 - Bridge Core, command routing, approval management, memory state, and baseline logging are implemented.
 - The default `codex app-server` adapter is implemented. It uses stdio JSON-RPC to create/resume threads, start turns, and route command/file/permissions approval requests to Weixin `/OK`, `/P`, and `/NO`.
+- True Codex Plan mode is implemented. `/plan` enters planning mode, `/code` returns to default execution mode, and the selected mode remains active until changed.
+- Experimental Codex Goal management is implemented. `/goal` shows or sets the current thread objective, and `/goal pause|resume|clear` pauses, resumes, or clears it.
 - The `codex exec --json` adapter is still available as a fallback mode and has been verified through the terminal channel with the real Codex CLI.
-- Weixin QR login, local account token persistence, text send, and basic `getupdates` polling support are implemented.
+- Weixin QR login, terminal QR rendering, local account token persistence, text send, and basic `getupdates` polling support are implemented.
 - Explicit file delivery is implemented. Paths in ordinary replies and progress are treated as text; use `/sendfile <task>` when Codex should generate and send final files for that turn.
-- The `weixin codex` startup entry checks Codex availability and Weixin login state. It skips QR login when credentials are valid and starts QR login when credentials are missing.
-- The `weixin codex` daemon terminal prints inbound Weixin messages, outbound Codex replies, policy-delivered progress updates, and media sends in a colored chat-style transcript so the running conversation can be observed locally. Non-TTY output stays plain text by default.
+- The `weixin codex` startup entry checks Codex availability and Weixin login state. It skips QR login when credentials are valid and renders a terminal QR code when credentials are missing.
+- The `weixin codex` daemon terminal prints inbound Weixin messages, outbound Codex replies, media sends, and Codex progress that is suppressed for Weixin but still visible locally, using a colored chat-style transcript so the running conversation can be observed locally. Non-TTY output stays plain text by default.
 - History session lists prefer Codex SQLite titles or first user messages, then fall back to `session_index.jsonl` and rollout metadata.
 
 ## Commands
@@ -49,7 +51,7 @@ During interactive startup, the middleware asks for the session first and then a
 
 The default `codex app-server` mode can reuse Codex history threads and acts as the Codex client for the current Weixin conversation. It supports interactive approvals, turn interruption, token usage status updates, and commentary-phase message forwarding, but it does not live-sync Weixin-side interaction into another already-open Codex CLI or Codex App window. Real-time multi-view synchronization still needs an observer UI or an event-subscription design. `codex exec --json` remains available with `--codex-adapter exec` for fallback and debugging.
 
-Normal messages from the same Weixin context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/stop`, and approval commands still run immediately. The Weixin channel no longer sends per-task start notices or progress messages. It still sends queued notices, approvals, final replies, errors, media send results, and user-initiated command replies. Weixin-side `/progress` is rejected and does not change delivery mode; `/fff` is a Weixin-only silent refresh command that is not forwarded to Codex.
+Normal messages from the same Weixin context are processed sequentially. If Codex is already running and another normal message arrives, the middleware replies with a queued notice; commands such as `/status`, `/stop`, and approval commands still run immediately. `/plan` and `/code` switch the collaboration mode for later turns in the current context. Already queued prompts keep the mode snapshot captured when they were queued. The Weixin channel no longer sends per-task start notices or progress messages. It still sends queued notices, approvals, final replies, Plan mode final plans, errors, media send results, and user-initiated command replies. Weixin-side `/progress` is rejected and does not change delivery mode; `/fff` is a Weixin-only silent refresh command that is not forwarded to Codex.
 
 The Weixin-side `/model` command reads the actual model list from Codex app-server `model/list`; it does not keep a hardcoded catalog. Use `/model` to list models, then `/model gpt-5.5 xhigh` or `/model 2 high` to switch the model and reasoning effort for subsequent turns. Unknown models and unsupported efforts are rejected.
 
@@ -71,6 +73,12 @@ To invalidate Weixin login, stop the middleware and delete the whole `state/weix
 - `/sessions`: list sessions known to the current channel context.
 - `/sessions all` or `/all-sessions`: list all discoverable Codex history session IDs.
 - `/resume <session>` / `/use <session>`: resume and bind a Codex session.
+- `/plan [task]`: enter Plan mode; with a task, switch to Plan mode and submit that task. The mode does not auto-exit.
+- `/code [task]`: switch back to default execution mode; with a task, switch back and submit that task. `/default` is a hidden alias.
+- `/goal [objective]`: show or set the experimental Goal for the current Codex session. Requires Codex `features.goals`.
+- `/goal pause`: pause Goal tracking while keeping the objective.
+- `/goal resume`: resume a paused Goal.
+- `/goal clear`: clear the Goal, which exits Goal tracking for the current session. It does not disable `features.goals`.
 - `/sendfile <task>`: let Codex declare final files for this turn through the internal bridge protocol; ordinary messages do not auto-send files.
 - `/model [model|number] [effort]`: list app-server models or switch the model and reasoning effort for subsequent turns.
 - `/permission [approval|full confirm]`: show or switch the permission mode for the currently bound Codex session; without a bound session it changes the default for future new sessions.

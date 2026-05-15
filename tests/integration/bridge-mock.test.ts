@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Bridge } from "../../src/bridge/bridge.js";
 import { MockChannelAdapter } from "../../src/channels/mock/mock-channel-adapter.js";
 import { MockCodexAdapter } from "../../src/codex/mock-codex-adapter.js";
-import type { CodexAdapter, CodexEvent, CodexSession, CodexSessionContextUsage, CodexSessionStatus, CodexSessionSummary, StartSessionInput } from "../../src/codex/types.js";
+import type { CodexAdapter, CodexCollaborationMode, CodexEvent, CodexRunOptions, CodexSession, CodexSessionContextUsage, CodexSessionStatus, CodexSessionSummary, StartSessionInput } from "../../src/codex/types.js";
 import type { TranscriptSink } from "../../src/logging/transcript.js";
 import type { ChannelMedia, ChannelMessage, ChannelTarget, SendResult } from "../../src/protocol/channel.js";
 import type { ChannelDeliveryPolicy } from "../../src/protocol/delivery-policy.js";
@@ -14,6 +14,7 @@ import path from "node:path";
 class CapturingTranscriptSink implements TranscriptSink {
   readonly inboundEvents: Array<{ message: ChannelMessage; text: string }> = [];
   readonly outboundEvents: Array<{ target: ChannelTarget; text: string }> = [];
+  readonly localProgressEvents: Array<{ target: ChannelTarget; text: string }> = [];
   readonly outboundMediaEvents: Array<{ target: ChannelTarget; media: ChannelMedia }> = [];
 
   inbound(message: ChannelMessage, text: string): void {
@@ -22,6 +23,10 @@ class CapturingTranscriptSink implements TranscriptSink {
 
   outbound(target: ChannelTarget, text: string): void {
     this.outboundEvents.push({ target, text });
+  }
+
+  localProgress(target: ChannelTarget, text: string): void {
+    this.localProgressEvents.push({ target, text });
   }
 
   outboundMedia(target: ChannelTarget, media: ChannelMedia): void {
@@ -120,6 +125,38 @@ class ManyProgressCodexAdapter extends MockCodexAdapter {
     yield { type: "assistant.progress", sessionId, turnId, kind: "reasoning", text: "第三段进度。" };
     yield { type: "assistant.completed", sessionId, turnId, text: "完成" };
     yield { type: "turn.completed", sessionId, turnId };
+  }
+}
+
+class PlanFinalCodexAdapter extends MockCodexAdapter {
+  override async *run(sessionId: string, _prompt: string, _options: CodexRunOptions = {}): AsyncIterable<CodexEvent> {
+    const turnId = `plan-final-turn-${Date.now()}`;
+    yield { type: "turn.started", sessionId, turnId };
+    yield { type: "assistant.progress", sessionId, turnId, kind: "todo", text: "计划更新: 这条进度不应该在微信里发送。" };
+    yield { type: "assistant.plan", sessionId, turnId, text: "# 执行计划\n- 先检查\n- 再实现" };
+    yield { type: "turn.completed", sessionId, turnId };
+  }
+}
+
+class BlockingModeCodexAdapter extends MockCodexAdapter {
+  private releaseFirst?: () => void;
+  readonly modeRuns: Array<CodexCollaborationMode | undefined> = [];
+
+  override async *run(sessionId: string, prompt: string, options: CodexRunOptions = {}): AsyncIterable<CodexEvent> {
+    this.modeRuns.push(options.collaborationMode);
+    const turnId = `blocking-mode-turn-${this.modeRuns.length}`;
+    yield { type: "turn.started", sessionId, turnId };
+    if (prompt === "第一条") {
+      await new Promise<void>((resolve) => {
+        this.releaseFirst = resolve;
+      });
+    }
+    yield { type: "assistant.completed", sessionId, turnId, text: `完成: ${prompt}` };
+    yield { type: "turn.completed", sessionId, turnId };
+  }
+
+  release(): void {
+    this.releaseFirst?.();
   }
 }
 
@@ -433,6 +470,105 @@ test("Bridge model command rejects unknown models and invalid or unsupported eff
   assert.ok(channel.sentMessages.some((message) => message.text.includes("模型 `gpt-test` 不支持思考程度 `xhigh`")));
 });
 
+test("Bridge switches persistent collaboration mode with /plan and /code", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/help");
+  await channel.emitText("/plan");
+  await channel.emitText("/status");
+  await channel.emitText("继续规划");
+  await bridge.waitForIdle();
+  await channel.emitText("/code");
+  await channel.emitText("/code 按计划实现");
+  await bridge.waitForIdle();
+  await channel.emitText("/default 默认别名任务");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
+  assert.ok(help.includes("```text\n/plan [任务]\n```"));
+  assert.ok(help.includes("```text\n/code [任务]\n```"));
+  assert.equal(help.includes("```text\n/default"), false);
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已进入 Plan mode")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已切回默认执行模式")));
+  const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
+  assert.ok(status.includes("Mode: `plan`"));
+  assert.deepEqual(codex.runs.map((run) => run.collaborationMode), ["plan", "default", "default"]);
+  assert.equal(codex.runs[1].prompt, "按计划实现");
+  assert.equal(codex.runs[2].prompt, "默认别名任务");
+});
+
+test("Bridge /plan with inline prompt keeps later prompts in plan mode", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/plan 先给我方案");
+  await bridge.waitForIdle();
+  await channel.emitText("继续细化这个方案");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.deepEqual(codex.runs.map((run) => run.collaborationMode), ["plan", "plan"]);
+  assert.deepEqual(codex.runs.map((run) => run.prompt), ["先给我方案", "继续细化这个方案"]);
+});
+
+test("Bridge manages experimental goal commands for the current session", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/help");
+  await channel.emitText("/goal");
+  await channel.emitText("/goal 完成微信 Goal 适配并保持测试通过");
+  await channel.emitText("/status");
+  await channel.emitText("/goal pause");
+  await channel.emitText("/goal resume");
+  await channel.emitText("/goal clear");
+  await channel.emitText("/goal");
+  await bridge.stop();
+
+  const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
+  assert.ok(help.includes("```text\n/goal [目标]\n```"));
+  assert.ok(help.includes("```text\n/goal pause\n```"));
+  assert.ok(help.includes("暂停 Goal：保留目标"));
+  assert.ok(help.includes("```text\n/goal resume\n```"));
+  assert.ok(help.includes("恢复 Goal：继续按已暂停的目标推进"));
+  assert.ok(help.includes("```text\n/goal clear\n```"));
+  assert.ok(help.includes("清除 Goal：退出当前会话的 Goal 追踪"));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("当前没有绑定 Codex 会话，也没有 Goal")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已设置 Goal")));
+  const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
+  assert.ok(status.includes("Goal: `active` 完成微信 Goal 适配并保持测试通过"));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已暂停 Goal") && message.text.includes("Status: `paused`")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已恢复 Goal") && message.text.includes("Status: `active`")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("已清除 Goal")));
+  assert.ok(channel.sentMessages.at(-1)?.text.includes("当前没有 Goal"));
+});
+
+test("Bridge snapshots collaboration mode when queueing prompts", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new BlockingModeCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("第一条");
+  await waitFor(() => codex.modeRuns.length === 1);
+  await channel.emitText("第二条");
+  await channel.emitText("/plan");
+  await channel.emitText("第三条");
+  codex.release();
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.deepEqual(codex.modeRuns, [undefined, undefined, "plan"]);
+});
+
 test("Bridge does not crash when channel text delivery fails", async () => {
   const channel = new FailingSendChannelAdapter();
   const codex = new MockCodexAdapter();
@@ -686,6 +822,24 @@ test("Bridge suppresses task start and progress on weixin while keeping final re
   assert.ok(texts.some((text) => text === "完成"));
 });
 
+test("Bridge logs suppressed weixin progress to local transcript without sending to channel", async () => {
+  const channel = new WeixinLikeChannelAdapter();
+  const codex = new ProgressCodexAdapter();
+  const transcript = new CapturingTranscriptSink();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd(), transcript });
+
+  await bridge.start();
+  await channel.emitText("跑一个有进度的任务");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  const channelTexts = channel.sentMessages.map((message) => message.text);
+  assert.equal(channelTexts.some((text) => text.startsWith("Codex 进度:")), false);
+  assert.equal(transcript.outboundEvents.some((event) => event.text.startsWith("Codex 进度:")), false);
+  assert.ok(transcript.localProgressEvents.some((event) => event.text.includes("我先列一个简短计划。")));
+  assert.ok(transcript.localProgressEvents.some((event) => event.text.includes("正在执行命令: npm test")));
+});
+
 test("Bridge uses delivery policy instead of channel id for progress suppression", async () => {
   const channel = new WeixinIdOnlyChannelAdapter();
   const codex = new ProgressCodexAdapter();
@@ -713,6 +867,23 @@ test("Bridge still sends errors on weixin when progress is disabled", async () =
 
   assert.equal(channel.sentMessages.some((message) => message.text.includes("Codex 正在处理这条消息")), false);
   assert.ok(channel.sentMessages.some((message) => message.text === "Codex 执行失败: 模拟失败"));
+});
+
+test("Bridge sends plan final output on weixin while progress is disabled", async () => {
+  const channel = new WeixinLikeChannelAdapter();
+  const codex = new PlanFinalCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/plan 请规划实现");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  const texts = channel.sentMessages.map((message) => message.text);
+  assert.equal(texts.some((text) => text.includes("Codex 正在处理这条消息")), false);
+  assert.equal(texts.some((text) => text.startsWith("Codex 进度:")), false);
+  assert.ok(texts.some((text) => text.includes("# 执行计划")));
+  assert.ok(texts.some((text) => text.includes("已进入 Plan mode")));
 });
 
 test("Bridge rejects progress command and silently accepts /fff on weixin", async () => {

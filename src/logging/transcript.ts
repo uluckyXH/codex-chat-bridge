@@ -5,6 +5,7 @@ import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../protocol/ch
 export interface TranscriptSink {
   inbound(message: ChannelMessage, text: string): void;
   outbound(target: ChannelTarget, text: string): void;
+  localProgress?(target: ChannelTarget, text: string): void;
   outboundMedia?(target: ChannelTarget, media: ChannelMedia): void;
 }
 
@@ -61,6 +62,15 @@ export class ConsoleTranscriptSink implements TranscriptSink {
     ]);
   }
 
+  localProgress(target: ChannelTarget, text: string): void {
+    const tone: TranscriptTone = "progress";
+    this.writeBlock([
+      this.header(channelLabel(target.channelId), "--", formatConversation(target.conversation.kind, target.conversation.id), "本地进度（未投递）", tone),
+      this.verbose ? `route: ${target.routeKey}` : undefined,
+      ...this.bodyLines(text, tone),
+    ]);
+  }
+
   outboundMedia(target: ChannelTarget, media: ChannelMedia): void {
     const mediaName = media.name ?? media.path ?? media.url ?? "";
     const tone: TranscriptTone = "media";
@@ -78,7 +88,7 @@ export class ConsoleTranscriptSink implements TranscriptSink {
     ]);
   }
 
-  private header(channel: string, direction: "<=" | "=>", subject: string, detail: string, tone: TranscriptTone): string {
+  private header(channel: string, direction: "<=" | "=>" | "--", subject: string, detail: string, tone: TranscriptTone): string {
     return paint(this.color, headerColor(tone), `[${formatClock(this.now())}] ${channel} ${direction} ${subject} | ${detail}`);
   }
 

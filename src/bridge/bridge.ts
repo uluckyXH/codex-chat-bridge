@@ -1,7 +1,7 @@
 import type { ApprovalDecision, PendingApproval } from "../approvals/types.js";
 import { ApprovalManager } from "../approvals/approval-manager.js";
 import type { CodexRunPolicy, CodexRunPolicyStatus } from "../codex/codex-cli.js";
-import type { CodexAdapter, CodexModelOption, CodexModelPolicy, CodexProgressKind, CodexReasoningEffort, CodexSession, CodexSessionContextUsage, CodexSessionModelInfo, CodexSessionStatus } from "../codex/types.js";
+import type { CodexAdapter, CodexCollaborationMode, CodexGoal, CodexGoalStatus, CodexModelOption, CodexModelPolicy, CodexProgressKind, CodexReasoningEffort, CodexSession, CodexSessionContextUsage, CodexSessionModelInfo, CodexSessionStatus } from "../codex/types.js";
 import { CODEX_REASONING_EFFORTS } from "../codex/types.js";
 import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
@@ -31,6 +31,7 @@ interface QueuedPrompt {
   message: ChannelMessage;
   target: ChannelTarget;
   prompt: string;
+  collaborationMode?: CodexCollaborationMode;
   sendFile: boolean;
 }
 
@@ -51,6 +52,7 @@ export class Bridge {
   private readonly defaultProgressMode: ProgressDeliveryMode;
   private readonly approvalSendRetryDelayMs: number;
   private readonly routeProgressModes = new Map<string, ProgressDeliveryMode>();
+  private readonly routeCollaborationModes = new Map<string, CodexCollaborationMode>();
   private readonly routeQueues = new Map<string, QueuedPrompt[]>();
   private readonly routeWorkers = new Map<string, Promise<void>>();
   private readonly progressSendSuppressedUntil = new Map<string, number>();
@@ -146,6 +148,16 @@ export class Bridge {
       case "debug":
         await this.sendText(target, await this.debugText(message));
         return;
+      case "plan":
+        await this.handleCollaborationModeCommand(message, target, "plan", rawText, name);
+        return;
+      case "code":
+      case "default":
+        await this.handleCollaborationModeCommand(message, target, "default", rawText, name);
+        return;
+      case "goal":
+        await this.handleGoalCommand(message, target, rawText);
+        return;
       case "progress":
       case "mode":
         if (deliveryPolicy.progressCommand === "disabled") {
@@ -201,7 +213,14 @@ export class Bridge {
       title: `channel:${message.routeKey}`,
     });
     this.state.bindSession(message.routeKey, session);
-    await this.sendText(target, `已创建新 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
+    this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
+    await this.sendText(target, [
+      "已创建新 Codex 会话",
+      `Session: ${session.id}`,
+      `Cwd: ${session.cwd}`,
+      "Status: idle",
+      `Mode: ${this.collaborationModeForRoute(message.routeKey, session.id)}`,
+    ].join("\n"));
     return session;
   }
 
@@ -217,6 +236,11 @@ export class Bridge {
       this.initialSessionId = undefined;
       const session = await this.codex.resumeSession(sessionId);
       this.state.bindSession(message.routeKey, session);
+      if (this.routeCollaborationModes.has(message.routeKey)) {
+        this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
+      } else {
+        this.syncRouteCollaborationModeFromSession(message.routeKey, session.id);
+      }
       return session;
     }
     const session = await this.codex.startSession({
@@ -225,6 +249,7 @@ export class Bridge {
       title: `channel:${message.routeKey}`,
     });
     this.state.bindSession(message.routeKey, session);
+    this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
     return session;
   }
 
@@ -232,11 +257,17 @@ export class Bridge {
     message: ChannelMessage,
     target: ChannelTarget,
     prompt: string,
-    options?: { sendFile?: boolean },
+    options?: { collaborationMode?: CodexCollaborationMode; sendFile?: boolean },
   ): Promise<void> {
     const queue = this.routeQueues.get(message.routeKey) ?? [];
     const pendingAhead = queue.length + (this.routeWorkers.has(message.routeKey) ? 1 : 0);
-    queue.push({ message, target, prompt, sendFile: options?.sendFile ?? false });
+    queue.push({
+      message,
+      target,
+      prompt,
+      collaborationMode: options?.collaborationMode ?? this.routeCollaborationModes.get(message.routeKey),
+      sendFile: options?.sendFile ?? false,
+    });
     this.routeQueues.set(message.routeKey, queue);
     if (pendingAhead > 0) {
       await this.sendText(target, `已加入队列，前面还有 ${pendingAhead} 条消息。`);
@@ -264,7 +295,7 @@ export class Bridge {
       const task = queue?.shift();
       if (!task) return;
       try {
-        await this.forwardPrompt(task.message, task.target, task.prompt, queue?.length ?? 0, task.sendFile);
+        await this.forwardPrompt(task.message, task.target, task.prompt, queue?.length ?? 0, task.sendFile, task.collaborationMode);
       } catch (error) {
         await this.sendText(task.target, `Codex 执行失败: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -277,6 +308,7 @@ export class Bridge {
     prompt: string,
     remainingQueued: number,
     sendFile: boolean,
+    collaborationMode: CodexCollaborationMode | undefined,
   ): Promise<void> {
     const session = await this.ensureSession(message);
     const deliveryPolicy = this.deliveryPolicyFor(message);
@@ -290,8 +322,9 @@ export class Bridge {
     }
     await this.withTyping(target, async () => {
       let finalText = "";
+      let finalPlanText = "";
       const codexPrompt = sendFile ? withSendFileInstruction(prompt) : prompt;
-      for await (const event of this.codex.run(session.id, codexPrompt)) {
+      for await (const event of this.codex.run(session.id, codexPrompt, collaborationMode ? { collaborationMode } : undefined)) {
         if (event.type === "turn.started") {
           this.state.setSessionStatus(session.id, {
             type: "running",
@@ -299,9 +332,14 @@ export class Bridge {
             task: truncateForChannel(prompt, 120),
           });
         } else if (event.type === "assistant.progress") {
+          const progressText = `Codex 进度:\n${truncateForChannel(event.text)}`;
           if (this.shouldDeliverProgressWithPolicy(deliveryPolicy, message.routeKey, event.kind)) {
-            await this.sendProgressText(message.routeKey, target, `Codex 进度:\n${truncateForChannel(event.text)}`);
+            await this.sendProgressText(message.routeKey, target, progressText);
+          } else if (deliveryPolicy.progress === "suppress") {
+            this.transcript?.localProgress?.(target, progressText);
           }
+        } else if (event.type === "assistant.plan") {
+          finalPlanText = event.text;
         } else if (event.type === "assistant.delta") {
           finalText += event.text;
         } else if (event.type === "assistant.completed") {
@@ -320,11 +358,12 @@ export class Bridge {
           await this.sendText(target, `Codex 执行失败: ${event.error}`);
         }
       }
-      if (finalText) {
-        const visibleText = sendFile ? stripBridgeSendFileRefs(finalText) : finalText;
+      const composedFinalText = composeFinalAnswer(finalPlanText, finalText);
+      if (composedFinalText) {
+        const visibleText = sendFile ? stripBridgeSendFileRefs(composedFinalText) : composedFinalText;
         if (visibleText) await this.sendText(target, visibleText);
         if (sendFile) {
-          await this.sendRequestedFiles(target, finalText, session.cwd);
+          await this.sendRequestedFiles(target, composedFinalText, session.cwd);
         }
       }
     });
@@ -342,7 +381,14 @@ export class Bridge {
     try {
       const session = await this.codex.resumeSession(sessionId);
       this.state.bindSession(message.routeKey, session);
-      await this.sendText(target, `已绑定 Codex 会话\nSession: ${session.id}\nCwd: ${session.cwd}\nStatus: idle`);
+      const mode = this.syncRouteCollaborationModeFromSession(message.routeKey, session.id);
+      await this.sendText(target, [
+        "已绑定 Codex 会话",
+        `Session: ${session.id}`,
+        `Cwd: ${session.cwd}`,
+        "Status: idle",
+        `Mode: ${mode}`,
+      ].join("\n"));
     } catch (error) {
       await this.sendText(target, error instanceof Error ? error.message : String(error));
     }
@@ -408,6 +454,113 @@ export class Bridge {
       "已请求停止当前 Codex 任务。",
       clearedQueued > 0 ? `已清空 ${clearedQueued} 条排队消息。` : undefined,
     ].filter(Boolean).join("\n"));
+  }
+
+  private async handleCollaborationModeCommand(
+    message: ChannelMessage,
+    target: ChannelTarget,
+    mode: CodexCollaborationMode,
+    rawText: string,
+    commandName: string,
+  ): Promise<void> {
+    if (!this.codex.setCollaborationMode || !this.codex.getCollaborationMode) {
+      await this.sendText(target, "当前 Codex Adapter 不支持 Plan mode 切换。请使用 app-server adapter。");
+      return;
+    }
+    const prompt = commandBody(rawText, commandName);
+    this.setRouteCollaborationMode(message.routeKey, mode);
+    const messageLines = mode === "plan"
+      ? [
+          "已进入 Plan mode。后续消息只做计划，不执行代码修改。",
+          "发送 /code 切回默认执行模式。",
+        ]
+      : [
+          "已切回默认执行模式。后续消息可按正常 Codex 行为执行。",
+          "发送 /plan 切回计划模式。",
+        ];
+    await this.sendText(target, [
+      ...messageLines,
+      this.routeWorkers.has(message.routeKey) ? "当前正在运行的任务不会被改写；新模式只影响后续任务。" : undefined,
+      prompt ? `已用 ${mode} mode 加入任务。` : undefined,
+    ].filter(Boolean).join("\n"));
+    if (prompt) {
+      await this.enqueuePrompt(message, target, prompt, { collaborationMode: mode });
+    }
+  }
+
+  private async handleGoalCommand(
+    message: ChannelMessage,
+    target: ChannelTarget,
+    rawText: string,
+  ): Promise<void> {
+    if (!this.codex.getGoal || !this.codex.setGoal || !this.codex.setGoalStatus || !this.codex.clearGoal) {
+      await this.sendText(target, "当前 Codex Adapter 不支持 Goal。请使用 app-server adapter，并确认 Codex 已启用 features.goals。");
+      return;
+    }
+    const body = commandBody(rawText, "goal");
+    const action = body.toLowerCase();
+    const binding = this.state.getBinding(message.routeKey);
+    try {
+      if (!body) {
+        if (!binding) {
+          await this.sendText(target, [
+            "**Goal**",
+            "- 当前没有绑定 Codex 会话，也没有 Goal。",
+            "- 发送 `/goal <目标>` 可为当前微信上下文创建/绑定会话并设置长期目标。",
+          ].join("\n"));
+          return;
+        }
+        await this.sendText(target, this.goalText(await this.codex.getGoal(binding.sessionId)));
+        return;
+      }
+      if (action === "clear") {
+        if (!binding) {
+          await this.sendText(target, "当前没有绑定 Codex 会话，也没有可清除的 Goal。");
+          return;
+        }
+        const cleared = await this.codex.clearGoal(binding.sessionId);
+        await this.sendText(target, cleared ? "已清除 Goal。后续任务不再按该长期目标追踪。" : "当前会话没有 Goal。");
+        return;
+      }
+      if (action === "pause" || action === "resume") {
+        if (!binding) {
+          await this.sendText(target, "当前没有绑定 Codex 会话，也没有可暂停/恢复的 Goal。");
+          return;
+        }
+        const status: CodexGoalStatus = action === "pause" ? "paused" : "active";
+        const goal = await this.codex.setGoalStatus(binding.sessionId, status);
+        await this.sendText(target, this.goalText(goal, action === "pause" ? "已暂停 Goal。" : "已恢复 Goal。"));
+        return;
+      }
+      const session = await this.ensureSession(message);
+      const goal = await this.codex.setGoal(session.id, body);
+      await this.sendText(target, this.goalText(goal, "已设置 Goal。"));
+    } catch (error) {
+      await this.sendText(target, goalErrorText(error));
+    }
+  }
+
+  private goalText(goal: CodexGoal | null, title = "**Goal**"): string {
+    if (!goal) {
+      return [
+        title,
+        "- 当前没有 Goal。",
+        "- 发送 `/goal <目标>` 设置长期目标。",
+      ].join("\n");
+    }
+    return [
+      title,
+      `- Objective: ${goal.objective}`,
+      `- Status: \`${formatGoalStatus(goal.status)}\``,
+      goal.tokenBudget !== null ? `- Token budget: \`${formatNumber(goal.tokenBudget)}\`` : undefined,
+      `- Tokens used: \`${formatNumber(goal.tokensUsed)}\``,
+      `- Time used: \`${formatDuration(goal.timeUsedSeconds)}\``,
+      "",
+      "命令说明：",
+      "- `/goal pause`：暂停追踪，保留目标但暂时不让 Codex 按它推进。",
+      "- `/goal resume`：恢复追踪，让 Codex 继续按该目标推进。",
+      "- `/goal clear`：清除目标，也就是退出当前 Goal 追踪。",
+    ].filter(Boolean).join("\n");
   }
 
   private async handleSendFileCommand(message: ChannelMessage, target: ChannelTarget, rawText: string): Promise<void> {
@@ -761,6 +914,9 @@ export class Bridge {
     const policy = policyStatus?.policy ?? this.codex.getRunPolicy?.(binding?.sessionId);
     const modelPolicy = this.codex.getModelPolicy?.(binding?.sessionId);
     const deliveryPolicy = this.deliveryPolicyFor(message);
+    const goal = binding && this.codex.getGoal
+      ? await this.codex.getGoal(binding.sessionId).catch(() => undefined)
+      : undefined;
     return [
       "**Codex 状态**",
       `- Session: \`${binding?.sessionId ?? "none"}\``,
@@ -772,6 +928,8 @@ export class Bridge {
       "**Bridge**",
       `- Processing: \`${workerRunning ? "yes" : "no"}\``,
       `- Queue: \`${this.routeQueues.get(routeKey)?.length ?? 0}\``,
+      `- Mode: \`${this.collaborationModeForRoute(routeKey, binding?.sessionId)}\``,
+      goal !== undefined ? `- Goal: ${formatGoalSummary(goal)}` : undefined,
       `- Pending approvals: \`${approvals.length}\``,
       ...formatPendingApprovalStatus(approvals.at(-1)),
       this.progressStatusLine(routeKey, deliveryPolicy),
@@ -851,6 +1009,12 @@ export class Bridge {
       ["/use <session>", "切换到已有会话"],
       ["/whoami", "查看当前通道身份"],
       ["/debug", "查看调试状态"],
+      ["/plan [任务]", "进入计划模式，或用计划模式处理任务"],
+      ["/code [任务]", "切回默认执行模式，或用默认模式处理任务"],
+      ["/goal [目标]", "查看或设置当前会话的实验 Goal 长期目标"],
+      ["/goal pause", "暂停 Goal：保留目标，但暂时不让 Codex 按它持续推进"],
+      ["/goal resume", "恢复 Goal：继续按已暂停的目标推进"],
+      ["/goal clear", "清除 Goal：退出当前会话的 Goal 追踪"],
       ["/progress [brief|detailed|silent]", "查看或设置当前上下文进度投递模式"],
       ["/sendfile <任务内容>", "让 Codex 本轮按内部协议声明最终要发送的文件"],
       ["/model [模型|编号] [effort]", "查看可用模型，或切换当前 Codex session 后续任务的模型和思考程度"],
@@ -879,6 +1043,31 @@ export class Bridge {
 
   private progressModeFor(routeKey: string): ProgressDeliveryMode {
     return this.routeProgressModes.get(routeKey) ?? this.defaultProgressMode;
+  }
+
+  private collaborationModeForRoute(routeKey: string, sessionId?: string): CodexCollaborationMode {
+    return this.routeCollaborationModes.get(routeKey) ?? this.codex.getCollaborationMode?.(sessionId) ?? "default";
+  }
+
+  private setRouteCollaborationMode(routeKey: string, mode: CodexCollaborationMode): void {
+    this.routeCollaborationModes.set(routeKey, mode);
+    const binding = this.state.getBinding(routeKey);
+    if (binding) this.codex.setCollaborationMode?.(mode, binding.sessionId);
+  }
+
+  private applyRouteCollaborationModeToSession(routeKey: string, sessionId: string): void {
+    const mode = this.routeCollaborationModes.get(routeKey);
+    if (mode) this.codex.setCollaborationMode?.(mode, sessionId);
+  }
+
+  private syncRouteCollaborationModeFromSession(routeKey: string, sessionId: string): CodexCollaborationMode {
+    const mode = this.codex.getCollaborationMode?.(sessionId) ?? "default";
+    if (mode === "default") {
+      this.routeCollaborationModes.delete(routeKey);
+    } else {
+      this.routeCollaborationModes.set(routeKey, mode);
+    }
+    return mode;
   }
 
   private deliveryPolicyFor(message: ChannelMessage | undefined): ChannelDeliveryPolicy {
@@ -1006,6 +1195,14 @@ function withSendFileInstruction(prompt: string): string {
   ].join("\n");
 }
 
+function composeFinalAnswer(planText: string, finalText: string): string {
+  const plan = planText.trim();
+  const final = finalText.trim();
+  if (!plan) return final;
+  if (!final || final === plan) return plan;
+  return `${plan}\n\n${final}`;
+}
+
 function formatCodexStatus(status: CodexSessionStatus): string {
   const parts: string[] = [status.type];
   if ("turnId" in status && status.turnId) parts.push(`turn=${status.turnId}`);
@@ -1019,6 +1216,20 @@ function formatRunPolicy(policy: CodexRunPolicy): string {
   return policy.permissionMode === "full"
     ? "full"
     : `approval sandbox=${policy.sandbox ?? "workspace-write"}`;
+}
+
+function formatGoalSummary(goal: CodexGoal | null): string {
+  if (!goal) return "`none`";
+  return `\`${formatGoalStatus(goal.status)}\` ${truncateForChannel(goal.objective, 80)}`;
+}
+
+function formatGoalStatus(status: CodexGoalStatus): string {
+  switch (status) {
+    case "active": return "active";
+    case "paused": return "paused";
+    case "budgetLimited": return "budget-limited";
+    case "complete": return "complete";
+  }
 }
 
 function formatApprovalSupport(status: CodexRunPolicyStatus): string {
@@ -1212,6 +1423,28 @@ function normalizeModelReference(value: string): string {
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatDuration(seconds: number): string {
+  const wholeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  const rest = wholeSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${rest}s`;
+  if (minutes > 0) return `${minutes}m ${rest}s`;
+  return `${rest}s`;
+}
+
+function goalErrorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/feature|experimental|features\.goals|not enabled|disabled|unknown method/i.test(message)) {
+    return [
+      "Goal 实验功能不可用或未启用。",
+      "请先在 Codex 中启用 features.goals，例如在 Codex CLI 使用 /experimental，或在 config.toml 的 [features] 下设置 goals = true，然后重启 bridge。",
+      `原始错误: ${message}`,
+    ].join("\n");
+  }
+  return message;
 }
 
 function formatPercent(value: number): string {

@@ -72,3 +72,25 @@ test("ConsoleTranscriptSink can color terminal transcript records", () => {
   assert.match(text, /\x1b\[33;1m\[08:09:10] 微信 => direct:chat-1 \| 进度\x1b\[0m/);
   assert.match(text, /\x1b\[33m  我先检查状态。\x1b\[0m/);
 });
+
+test("ConsoleTranscriptSink prints local progress as not delivered", () => {
+  const output = new MemoryWritable();
+  const sink = new ConsoleTranscriptSink({
+    output,
+    color: false,
+    now: () => new Date(2026, 4, 14, 8, 9, 10),
+  });
+
+  sink.localProgress({
+    channelId: "weixin",
+    routeKey: "weixin:acct:direct:chat-1",
+    accountId: "acct",
+    conversation: { id: "chat-1", kind: "direct" },
+    recipient: { id: "sender-1" },
+  }, "Codex 进度:\n我先检查状态。");
+
+  const text = output.text();
+  assert.match(text, /\[08:09:10] 微信 -- direct:chat-1 \| 本地进度（未投递）/);
+  assert.match(text, /  Codex 进度:/);
+  assert.match(text, /  我先检查状态。/);
+});

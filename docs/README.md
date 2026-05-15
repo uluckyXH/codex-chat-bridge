@@ -95,4 +95,4 @@ npm run cli:weixin:login
 npm run cli:weixin:codex
 ```
 
-`weixin login` 已具备二维码登录入口。`weixin codex` 是真实微信通道 + Codex 的启动入口：启动时会读取本地微信凭证，已登录则直接启动，未登录则弹出二维码登录流程。默认 app-server 模式可以把 Codex command/file/permissions 审批请求推送到微信，并由 `/OK` 或 `/NO` 回写 Codex。真实扫码登录完成后要追加真实微信通道测试报告。
+`weixin login` 已具备二维码登录入口，会在终端渲染二维码并保留备用链接。`weixin codex` 是真实微信通道 + Codex 的启动入口：启动时会读取本地微信凭证，已登录则直接启动，未登录则弹出二维码登录流程。默认 app-server 模式可以把 Codex command/file/permissions 审批请求推送到微信，并由 `/OK` 或 `/NO` 回写 Codex。真实扫码登录完成后要追加真实微信通道测试报告。

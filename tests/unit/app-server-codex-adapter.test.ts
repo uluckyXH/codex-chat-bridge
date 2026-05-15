@@ -18,6 +18,7 @@ let threadId = "thread-app-server-1";
 let turnId = "turn-app-server-1";
 let threadSequence = 1;
 let ignoreInterrupt = false;
+let goal = null;
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\\n");
 }
@@ -131,6 +132,35 @@ rl.on("line", (line) => {
     send({ id: message.id, result: { thread: thread(process.cwd()), cwd: process.cwd(), model: "fake", modelProvider: "openai", serviceTier: null, instructionSources: [], approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: { type: "workspaceWrite", writableRoots: [process.cwd()], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false }, reasoningEffort: "medium" } });
     return;
   }
+  if (message.method === "thread/goal/get") {
+    send({ id: message.id, result: { goal } });
+    return;
+  }
+  if (message.method === "thread/goal/set") {
+    if (!goal && !message.params.objective) {
+      send({ id: message.id, error: { code: -32602, message: "no goal to update" } });
+      return;
+    }
+    const now = Date.now() / 1000;
+    goal = {
+      threadId: message.params.threadId,
+      objective: message.params.objective || goal.objective,
+      status: message.params.status || goal.status,
+      tokenBudget: message.params.tokenBudget ?? goal?.tokenBudget ?? null,
+      tokensUsed: goal?.tokensUsed ?? 12,
+      timeUsedSeconds: goal?.timeUsedSeconds ?? 34,
+      createdAt: goal?.createdAt ?? now,
+      updatedAt: now,
+    };
+    send({ id: message.id, result: { goal } });
+    return;
+  }
+  if (message.method === "thread/goal/clear") {
+    const cleared = Boolean(goal);
+    goal = null;
+    send({ id: message.id, result: { cleared } });
+    return;
+  }
   if (message.method === "turn/start") {
     turnId = "turn-app-server-" + Date.now();
     send({ id: message.id, result: { turn: { id: turnId, items: [], itemsView: "complete", status: "inProgress", error: null, startedAt: 1778716800, completedAt: null, durationMs: null } } });
@@ -165,6 +195,20 @@ rl.on("line", (line) => {
     }
     if (prompt.includes("model params")) {
       send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "model " + message.params.model + " effort " + message.params.effort, phase: null, memoryCitation: null } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
+      return;
+    }
+    if (prompt.includes("collaboration mode params")) {
+      const collab = message.params.collaborationMode || {};
+      const settings = collab.settings || {};
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "agentMessage", id: "msg-1", text: "mode " + collab.mode + " model " + settings.model + " effort " + settings.reasoning_effort + " dev " + settings.developer_instructions, phase: null, memoryCitation: null } } });
+      send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
+      return;
+    }
+    if (prompt.includes("plan item final")) {
+      send({ method: "item/started", params: { threadId, turnId, startedAtMs: Date.now(), item: { type: "plan", id: "plan-final-1", text: "" } } });
+      send({ method: "item/plan/delta", params: { threadId, turnId, itemId: "plan-final-1", delta: "# Plan\\n- first\\n" } });
+      send({ method: "item/completed", params: { threadId, turnId, completedAtMs: Date.now(), item: { type: "plan", id: "plan-final-1", text: "# Plan\\n- first\\n" } } });
       send({ method: "turn/completed", params: { threadId, turn: { id: turnId, items: [], itemsView: "complete", status: "completed", error: null, startedAt: 1778716800, completedAt: 1778716801, durationMs: 1000 } } });
       return;
     }
@@ -512,4 +556,70 @@ test("AppServerCodexAdapter sends model policy on turn start", async () => {
   assert.equal(status.model?.model, "fake-next");
   assert.equal(status.model?.reasoningEffort, "xhigh");
   assert.deepEqual(adapter.getModelPolicy(session.id), { model: "fake-next", reasoningEffort: "xhigh" });
+});
+
+test("AppServerCodexAdapter sends collaboration mode on turn start", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+  adapter.setCollaborationMode("plan", session.id);
+  const events = [];
+
+  for await (const event of adapter.run(session.id, "collaboration mode params please")) {
+    events.push(event);
+  }
+  await adapter.stop();
+
+  assert.equal(adapter.getCollaborationMode(session.id), "plan");
+  assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "mode plan model fake effort medium dev null"));
+});
+
+test("AppServerCodexAdapter emits completed plan items as final plan events in plan mode", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+  const events = [];
+
+  for await (const event of adapter.run(session.id, "plan item final please", { collaborationMode: "plan" })) {
+    events.push(event);
+  }
+  await adapter.stop();
+
+  assert.ok(events.some((event) => event.type === "assistant.progress" && event.kind === "todo" && event.text.includes("# Plan")));
+  assert.ok(events.some((event) => event.type === "assistant.plan" && event.text === "# Plan\n- first\n"));
+});
+
+test("AppServerCodexAdapter manages experimental thread goals", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.startSession({
+    routeKey: "route-1",
+    cwd: root,
+    title: "test",
+  });
+
+  assert.equal(await adapter.getGoal(session.id), null);
+  const active = await adapter.setGoal(session.id, "完成微信 Goal 适配并保持测试通过");
+  const paused = await adapter.setGoalStatus(session.id, "paused");
+  const resumed = await adapter.setGoalStatus(session.id, "active");
+  const current = await adapter.getGoal(session.id);
+  const cleared = await adapter.clearGoal(session.id);
+  const empty = await adapter.getGoal(session.id);
+  await adapter.stop();
+
+  assert.equal(active.objective, "完成微信 Goal 适配并保持测试通过");
+  assert.equal(active.status, "active");
+  assert.equal(paused.status, "paused");
+  assert.equal(resumed.status, "active");
+  assert.equal(current?.objective, "完成微信 Goal 适配并保持测试通过");
+  assert.equal(cleared, true);
+  assert.equal(empty, null);
 });

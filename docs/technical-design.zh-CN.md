@@ -344,12 +344,22 @@ type ChannelMessage = {
 - `/resume`
 - `/whoami`
 - `/debug`
+- `/plan [任务]`
+- `/code [任务]`
+- `/goal [目标]`
+- `/goal pause`
+- `/goal resume`
+- `/goal clear`
 - `/permission [approval|full confirm]`
 - `/OK`
 - `/NO`
 - `/stop`
 
 命令处理结果直接通过 Channel Adapter 回复微信，不进入 Codex。
+
+`/plan` 和 `/code` 是当前 route/session 级的协作模式切换命令。`/plan` 进入 Codex Plan mode，后续普通消息只做计划；`/code` 切回默认执行模式。两者带任务内容时会先切换模式，再把任务按该模式加入普通 prompt 队列。模式不会在 turn 完成后自动退出；已入队普通消息保留入队时的 mode 快照，避免后续切换改写旧任务语义。
+
+`/goal` 是当前 Codex thread 级的实验目标管理命令，不是 collaboration mode，也不进入普通 prompt。`/goal <目标>` 调用 app-server `thread/goal/set` 设置长期目标；`/goal` 调用 `thread/goal/get` 查看；`/goal pause` 和 `/goal resume` 通过 `thread/goal/set` 更新状态；`/goal clear` 调用 `thread/goal/clear` 清除目标。`clear` 表示退出当前 thread 的 Goal 追踪，但不关闭 `features.goals` 实验功能；该实验开关必须通过 Codex 官方 `/experimental` 或 config.toml 管理。
 
 ### 3.4 Codex Adapter
 
@@ -551,7 +561,7 @@ src/channels/<channel-id>/
 - 已实现从 `$CODEX_HOME/state_5.sqlite`、`$CODEX_HOME/session_index.jsonl` 和 `$CODEX_HOME/sessions/**/*.jsonl` 发现历史会话，并优先展示 Codex 保存的标题或首条用户消息。
 - 已实现 `terminal codex` 启动时先选会话、再选权限模式，并在启动摘要里显示本次会话、工作目录、权限和进度模式。
 - 已用中间件真实调用 `codex exec --json` 并收到回复。
-- `weixin codex` 启动入口已启用运行期 transcript：Bridge 收到微信消息、向微信发送回复、按投递策略发送进度或媒体时，会以彩色聊天记录样式同步打印到启动中间件的终端；默认非 TTY 输出保持纯文本，方便重定向日志。
+- `weixin codex` 启动入口已启用运行期 transcript：Bridge 收到微信消息、向微信发送回复、发送媒体，以及遇到被微信策略抑制的 Codex 进度时，都会以彩色聊天记录样式同步打印到启动中间件的终端；被抑制的进度标记为“本地进度（未投递）”，默认非 TTY 输出保持纯文本，方便重定向日志。
 - 已把 `codex exec --json` 中可见的 reasoning summary、命令、工具、文件变更等事件转换为通用 progress 事件；是否投递到具体渠道由 `ChannelDeliveryPolicy` 决定。
 
 限制：
@@ -588,6 +598,7 @@ src/channels/<channel-id>/
 - 是深度集成方案。
 - 支持 `thread/start`、`thread/resume`、`thread/fork`、`thread/read`、`thread/list`。
 - 支持 `turn/start`、`turn/steer`、`turn/interrupt`。
+- 支持 `turn/start.collaborationMode`，可用 true Plan mode 而不是通过 prompt 伪装规划模式。
 - 能监听 `thread/status/changed`、`turn/*`、`item/*` 等事件。
 - 支持审批请求和更完整的客户端状态同步。
 - 支持 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval` 等 server request，可映射到微信审批命令。
@@ -606,6 +617,8 @@ src/channels/<channel-id>/
 - 已实现 `AppServerCodexAdapter` 初版，默认由 `terminal codex` 和 `weixin codex` 使用。
 - 已实现 `codex app-server --listen stdio://` 子进程管理、JSON-RPC request/response、通知分发和停止清理。
 - 已实现 `thread/start`、`thread/resume`、`turn/start`、`turn/interrupt`。
+- 已实现 `/plan`、`/code` 到 `turn/start.collaborationMode` 的桥接；Plan mode completed plan item 会转成最终可投递结果，避免微信 progress suppressed 时看不到计划主体。
+- 已实现实验 Goal API 桥接：`thread/goal/set`、`thread/goal/get`、`thread/goal/clear`，供微信侧 `/goal` 命令管理当前 thread 的长期目标。
 - 已实现 `item/commandExecution/requestApproval`、`item/fileChange/requestApproval`、`item/permissions/requestApproval`，并兼容旧 `execCommandApproval`、`applyPatchApproval`。
 - 已把 app-server 原始 request id 保存为内部 `adapterApprovalId`，微信用户只需要回复 `/OK` 或 `/NO`。
 
@@ -1009,13 +1022,14 @@ app-server adapter 可用事件：
 - `item/fileChange/patchUpdated`
 - `serverRequest/resolved`
 
-其中 `thread/tokenUsage/updated` 会更新当前 session 的上下文 token 用量，供 `/status` 展示。`agentMessage.phase=commentary` 的消息视为阶段性 commentary 更新，转成 `assistant.progress`；`phase=final_answer` 或缺省 phase 按兼容路径进入最终回复。`item/reasoning/textDelta` 默认通过 `optOutNotificationMethods` 关闭，避免把 raw reasoning 推送到聊天通道。
+其中 `thread/tokenUsage/updated` 会更新当前 session 的上下文 token 用量，供 `/status` 展示。`agentMessage.phase=commentary` 的消息视为阶段性 commentary 更新，转成 `assistant.progress`；`phase=final_answer` 或缺省 phase 按兼容路径进入最终回复。Plan mode 下 completed `item.type=plan` 除继续生成 `todo` progress 外，还会转成 `assistant.plan`，由 Bridge 作为最终可投递内容处理。`item/reasoning/textDelta` 默认通过 `optOutNotificationMethods` 关闭，避免把 raw reasoning 推送到聊天通道。
 
 ### 8.2.2 微信发送策略
 
 微信不适合逐 token 或高频连续发送。当前微信策略是只投递关键消息，不投递 task-start 和 progress：
 
 - task-start 和 `assistant.progress` 不发送到微信。
+- Plan mode 的最终 `assistant.plan` 会作为关键最终内容发送，不受 progress suppressed 影响。
 - final answer、turn failed/error、审批提示、审批处理结果、队列提示、媒体发送结果和用户主动命令回复仍发送。
 - `/progress` 在微信中不可用；`/status` 显示 Progress 为 `disabled`。
 - `/fff` 在微信中静默处理，作为用户主动入站触发，不产生回复。

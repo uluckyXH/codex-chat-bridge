@@ -12,11 +12,13 @@
 - 已实现 Mock、Terminal、Weixin 三类通道适配器。
 - 已实现 Bridge Core、命令路由、审批管理、内存状态和基础日志。
 - 已实现默认 `codex app-server` 适配器：通过 stdio JSON-RPC 创建/恢复 thread，启动 turn，并把 command/file/permissions 审批请求转成微信 `/OK`、`/P`、`/NO`。
+- 已实现 Codex true Plan mode：`/plan` 进入计划模式，`/code` 切回默认执行模式，模式按当前上下文持续生效且不会自动退出。
+- 已实现 Codex 实验 Goal 管理：`/goal` 查看或设置当前 thread 长期目标，`/goal pause|resume|clear` 暂停、恢复或清除目标。
 - 已保留 `codex exec --json` 适配器作为回退模式，并通过终端通道验证真实 Codex CLI 通信。
-- 已实现微信二维码登录入口、账号凭证本地保存、文本发送和 `getupdates` 轮询基础能力。
+- 已实现微信二维码登录入口、终端二维码展示、账号凭证本地保存、文本发送和 `getupdates` 轮询基础能力。
 - 已实现显式文件发送：普通回复和进度里的路径只当文本；需要让 Codex 本轮生成并发送文件时，使用 `/sendfile <任务内容>`。
-- `weixin codex` 启动时会检查 Codex 可用性和微信登录态；已登录会跳过二维码，未登录会进入扫码登录。
-- `weixin codex` 常驻终端会用彩色聊天记录样式打印微信入站消息、发回微信的 Codex 回复、按投递策略发出的阶段性进度和媒体发送记录，方便运行时观察对话流；默认非 TTY 输出会保持纯文本。
+- `weixin codex` 启动时会检查 Codex 可用性和微信登录态；已登录会跳过二维码，未登录会在终端显示二维码并进入扫码登录。
+- `weixin codex` 常驻终端会用彩色聊天记录样式打印微信入站消息、发回微信的 Codex 回复、媒体发送记录，以及被微信策略抑制、仅本地可见的 Codex 阶段性进度，方便运行时观察对话流；默认非 TTY 输出会保持纯文本。
 - 历史会话列表会优先读取 Codex SQLite 状态里的标题或首条用户消息，读不到再回退到 `session_index.jsonl` 和 rollout 元数据。
 
 ## 常用命令
@@ -49,7 +51,7 @@ npm run cli:weixin:codex -- --session last --permission approval
 
 默认 `codex app-server` 模式会复用 Codex 历史 thread，并由中间件作为当前微信会话的 Codex 客户端。它支持交互审批、turn 中断、token usage 状态更新和 commentary 阶段消息转发，但不会把微信侧交互实时同步到另一个已经打开的 Codex CLI 或 Codex App 窗口；如需多端实时同屏，需要额外的观察端或事件订阅设计。`codex exec --json` 仍可通过 `--codex-adapter exec` 启用，用于回退和调试。
 
-同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/stop`、审批命令仍会立即处理。微信渠道不再发送每条任务开始提示和阶段性进度，只发送队列提示、审批、最终回复、错误、媒体发送结果和用户主动命令回复；需要查看会话、模型、上下文 token 用量和权限细节时使用 `/status`。微信侧 `/progress` 会被拒绝，不改变投递模式；`/fff` 是微信专用静默刷新命令，不会回复，也不会转发给 Codex。
+同一个微信上下文中的普通消息会按顺序排队处理。Codex 正在工作时再发送普通消息，中间件会先回复排队提示；命令类消息如 `/status`、`/stop`、审批命令仍会立即处理。`/plan` 和 `/code` 会切换当前上下文后续任务的协作模式，已排队的普通消息保留入队时的模式快照，不会被之后的模式切换改写。微信渠道不再发送每条任务开始提示和阶段性进度，只发送队列提示、审批、最终回复、Plan mode 最终计划、错误、媒体发送结果和用户主动命令回复；需要查看会话、模型、模式、上下文 token 用量和权限细节时使用 `/status`。微信侧 `/progress` 会被拒绝，不改变投递模式；`/fff` 是微信专用静默刷新命令，不会回复，也不会转发给 Codex。
 
 微信侧 `/model` 会从 Codex app-server 的 `model/list` 获取当前真实可用模型，不维护硬编码目录。可以发送 `/model` 查看列表，发送 `/model gpt-5.5 xhigh` 或 `/model 2 high` 切换后续任务的模型和思考程度；模型名或思考程度不在实际列表内会直接报错。
 
@@ -71,6 +73,12 @@ npm run cli:weixin:codex -- --session last --permission approval
 - `/sessions`：查看当前微信上下文绑定过的会话。
 - `/sessions all` 或 `/all-sessions`：查看全部可发现 Codex 历史会话 ID。
 - `/resume <session>` / `/use <session>`：恢复并绑定指定 Codex 会话。
+- `/plan [任务]`：进入 Plan mode；带任务时先切到计划模式再处理该任务，执行完不会自动退出。
+- `/code [任务]`：切回默认执行模式；带任务时先切回默认模式再处理该任务。`/default` 是隐藏别名。
+- `/goal [目标]`：查看或设置当前 Codex 会话的实验 Goal 长期目标；需要 Codex 启用 `features.goals`。
+- `/goal pause`：暂停 Goal，保留目标但暂时不让 Codex 按它持续推进。
+- `/goal resume`：恢复已暂停的 Goal，让 Codex 继续按该目标推进。
+- `/goal clear`：清除 Goal，也就是退出当前会话的 Goal 追踪；不会关闭 `features.goals` 实验功能。
 - `/sendfile <任务内容>`：让 Codex 本轮按内部协议声明最终要发送的文件；普通消息不会自动发文件。
 - `/model [模型|编号] [effort]`：查看 app-server 实际可用模型，或切换后续任务使用的模型和思考程度。
 - `/permission [approval|full confirm]`：查看或切换当前绑定 Codex session 的权限模式；没有绑定 session 时修改后续新会话默认权限。

@@ -7,6 +7,29 @@ export const CODEX_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "hig
 
 export type CodexReasoningEffort = typeof CODEX_REASONING_EFFORTS[number];
 
+export const CODEX_COLLABORATION_MODES = ["default", "plan"] as const;
+
+export type CodexCollaborationMode = typeof CODEX_COLLABORATION_MODES[number];
+
+export interface CodexRunOptions {
+  collaborationMode?: CodexCollaborationMode;
+}
+
+export const CODEX_GOAL_STATUSES = ["active", "paused", "budgetLimited", "complete"] as const;
+
+export type CodexGoalStatus = typeof CODEX_GOAL_STATUSES[number];
+
+export interface CodexGoal {
+  threadId: string;
+  objective: string;
+  status: CodexGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface CodexSession {
   id: string;
   cwd: string;
@@ -84,6 +107,7 @@ export type CodexSessionStatus = CodexSessionBaseStatus & {
 export type CodexEvent =
   | { type: "turn.started"; sessionId: string; turnId: string }
   | { type: "assistant.progress"; sessionId: string; turnId: string; text: string; kind?: CodexProgressKind }
+  | { type: "assistant.plan"; sessionId: string; turnId: string; text: string }
   | { type: "assistant.delta"; sessionId: string; turnId: string; text: string }
   | { type: "assistant.completed"; sessionId: string; turnId: string; text: string }
   | { type: "approval.requested"; sessionId: string; turnId: string; approval: ApprovalRequest }
@@ -118,7 +142,7 @@ export interface CodexAdapter {
   stop?(): Promise<void>;
   startSession(input: StartSessionInput): Promise<CodexSession>;
   resumeSession(sessionId: string): Promise<CodexSession>;
-  run(sessionId: string, prompt: string): AsyncIterable<CodexEvent>;
+  run(sessionId: string, prompt: string, options?: CodexRunOptions): AsyncIterable<CodexEvent>;
   steer?(sessionId: string, prompt: string): Promise<void>;
   cancel?(sessionId: string): Promise<void>;
   getStatus(sessionId: string): Promise<CodexSessionStatus>;
@@ -130,4 +154,10 @@ export interface CodexAdapter {
   listModels?(options?: CodexModelListOptions): Promise<CodexModelOption[]>;
   getModelPolicy?(sessionId?: string): CodexModelPolicy;
   setModelPolicy?(policy: CodexModelPolicy, sessionId?: string): void;
+  getCollaborationMode?(sessionId?: string): CodexCollaborationMode;
+  setCollaborationMode?(mode: CodexCollaborationMode, sessionId?: string): void;
+  getGoal?(sessionId: string): Promise<CodexGoal | null>;
+  setGoal?(sessionId: string, objective: string): Promise<CodexGoal>;
+  setGoalStatus?(sessionId: string, status: CodexGoalStatus): Promise<CodexGoal>;
+  clearGoal?(sessionId: string): Promise<boolean>;
 }
