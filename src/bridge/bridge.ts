@@ -7,18 +7,25 @@ import { parseCommand } from "../commands/parser.js";
 import type { Logger } from "../logging/logger.js";
 import { SilentLogger } from "../logging/logger.js";
 import type { TranscriptSink } from "../logging/transcript.js";
+import { ChannelRegistry, createSingleChannelRegistry } from "../channels/registry.js";
 import type { ChannelAdapter, ChannelMedia, ChannelMessage, ChannelTarget } from "../protocol/channel.js";
 import { replyTargetFromMessage } from "../protocol/channel.js";
 import type { ChannelDeliveryPolicy, ChannelRefreshCommandPolicy } from "../protocol/delivery-policy.js";
 import { DEFAULT_CHANNEL_DELIVERY_POLICY, normalizeChannelDeliveryPolicy, normalizeDeliveryCommandName } from "../protocol/delivery-policy.js";
 import { MemoryStateStore } from "../state/memory-state-store.js";
+import type { SessionBindings } from "../state/session-bindings.js";
 import { BRIDGE_SEND_FILE_PREFIX, extractBridgeSendFileRefs, stripBridgeSendFileRefs } from "./media-extractor.js";
+import type { TurnScheduler } from "./turn-scheduler.js";
+import { TurnSchedulerAbortError, UnlimitedTurnScheduler } from "./turn-scheduler.js";
 
 export interface BridgeOptions {
-  channel: ChannelAdapter;
+  channel?: ChannelAdapter;
+  channels?: ChannelRegistry;
   codex: CodexAdapter;
   state?: MemoryStateStore;
+  sessionBindings?: SessionBindings;
   approvals?: ApprovalManager;
+  turnScheduler?: TurnScheduler;
   logger?: Logger;
   transcript?: TranscriptSink;
   cwd?: string;
@@ -42,10 +49,11 @@ const APPROVAL_SEND_RETRY_DELAY_MS = 10_000;
 const SEND_FILE_MAX_FILES = 3;
 
 export class Bridge {
-  private readonly channel: ChannelAdapter;
+  private readonly channels: ChannelRegistry;
   private readonly codex: CodexAdapter;
   private readonly state: MemoryStateStore;
   private readonly approvals: ApprovalManager;
+  private readonly turnScheduler: TurnScheduler;
   private readonly logger: Logger;
   private readonly transcript?: TranscriptSink;
   private readonly cwd: string;
@@ -55,15 +63,23 @@ export class Bridge {
   private readonly routeCollaborationModes = new Map<string, CodexCollaborationMode>();
   private readonly routeQueues = new Map<string, QueuedPrompt[]>();
   private readonly routeWorkers = new Map<string, Promise<void>>();
+  private readonly routeAbortControllers = new Map<string, AbortController>();
   private readonly progressSendSuppressedUntil = new Map<string, number>();
   private initialSessionId?: string;
 
   constructor(options: BridgeOptions) {
-    this.channel = options.channel;
+    if (Boolean(options.channel) === Boolean(options.channels)) {
+      throw new Error("Bridge requires exactly one of channel or channels");
+    }
+    if (options.state && options.sessionBindings && options.state.sessionBindings !== options.sessionBindings) {
+      throw new Error("Bridge state and sessionBindings must share the same SessionBindings instance");
+    }
     this.codex = options.codex;
-    this.state = options.state ?? new MemoryStateStore();
+    this.state = options.state ?? new MemoryStateStore(options.sessionBindings);
     this.approvals = options.approvals ?? new ApprovalManager();
     this.logger = options.logger ?? new SilentLogger();
+    this.channels = options.channels ?? createSingleChannelRegistry(options.channel as ChannelAdapter, this.logger);
+    this.turnScheduler = options.turnScheduler ?? new UnlimitedTurnScheduler();
     this.transcript = options.transcript;
     this.cwd = options.cwd ?? process.cwd();
     this.initialSessionId = options.initialSessionId;
@@ -72,15 +88,15 @@ export class Bridge {
   }
 
   async start(): Promise<void> {
-    this.channel.onMessage((message) => this.handleMessage(message));
-    await this.channel.start();
-    this.logger.info("bridge started", { channel: this.channel.id });
+    this.channels.onMessage((message) => this.handleMessage(message));
+    await this.channels.start();
+    this.logger.info("bridge started", { channels: this.channels.ids().join(",") });
   }
 
   async stop(): Promise<void> {
-    await this.channel.stop();
+    await this.channels.stop();
     await this.codex.stop?.();
-    this.logger.info("bridge stopped", { channel: this.channel.id });
+    this.logger.info("bridge stopped", { channels: this.channels.ids().join(",") });
   }
 
   async handleMessage(message: ChannelMessage): Promise<void> {
@@ -113,7 +129,7 @@ export class Bridge {
     const refreshCommand = this.refreshCommandFor(deliveryPolicy, name);
     if (refreshCommand) {
       this.logger.info("channel refresh command received", {
-        channel: this.channel.id,
+        channel: message.channelId,
         command: refreshCommand.command,
         routeKey: message.routeKey,
       });
@@ -229,13 +245,27 @@ export class Bridge {
     if (binding) {
       const stored = this.state.getSession(binding.sessionId);
       if (stored) return stored.session;
-      return this.codex.resumeSession(binding.sessionId);
+      const session = await this.codex.resumeSession(binding.sessionId);
+      const activated = this.state.activateOwnedSession(message.routeKey, session);
+      if (!activated.ok) {
+        throw new Error(`Codex session is owned by another route: ${activated.owner?.ownerRouteKey ?? "unknown"}`);
+      }
+      return session;
     }
     if (this.initialSessionId) {
       const sessionId = this.initialSessionId;
       this.initialSessionId = undefined;
-      const session = await this.codex.resumeSession(sessionId);
-      this.state.bindSession(message.routeKey, session);
+      const claim = this.state.claimSessionOwner(message.routeKey, sessionId);
+      if (!claim.ok) throw ownerConflictError(sessionId, claim.owner.ownerRouteKey);
+      let session: CodexSession;
+      try {
+        session = await this.codex.resumeSession(sessionId);
+      } catch (error) {
+        if (claim.newlyClaimed) this.state.rollbackSessionOwnerClaim(message.routeKey, sessionId);
+        throw error;
+      }
+      const activated = this.state.activateOwnedSession(message.routeKey, session);
+      if (!activated.ok) throw ownerConflictError(sessionId, activated.owner?.ownerRouteKey ?? "unknown");
       if (this.routeCollaborationModes.has(message.routeKey)) {
         this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
       } else {
@@ -297,6 +327,7 @@ export class Bridge {
       try {
         await this.forwardPrompt(task.message, task.target, task.prompt, queue?.length ?? 0, task.sendFile, task.collaborationMode);
       } catch (error) {
+        if (error instanceof TurnSchedulerAbortError) continue;
         await this.sendText(task.target, `Codex 执行失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -311,62 +342,76 @@ export class Bridge {
     collaborationMode: CodexCollaborationMode | undefined,
   ): Promise<void> {
     const session = await this.ensureSession(message);
-    const deliveryPolicy = this.deliveryPolicyFor(message);
-    if (deliveryPolicy.taskStart === "send") {
-      await this.sendText(target, [
-        "Codex 正在处理这条消息。",
-        "可发送 /status 查看状态，/stop 终止。",
-        sendFile ? "本轮已启用 /sendfile，只会发送最终回复中明确声明的文件。" : undefined,
-        remainingQueued > 0 ? `Queue: 后面还有 ${remainingQueued} 条` : undefined,
-      ].filter(Boolean).join("\n"));
-    }
-    await this.withTyping(target, async () => {
-      let finalText = "";
-      let finalPlanText = "";
-      const codexPrompt = sendFile ? withSendFileInstruction(prompt) : prompt;
-      for await (const event of this.codex.run(session.id, codexPrompt, collaborationMode ? { collaborationMode } : undefined)) {
-        if (event.type === "turn.started") {
-          this.state.setSessionStatus(session.id, {
-            type: "running",
-            turnId: event.turnId,
-            task: truncateForChannel(prompt, 120),
-          });
-        } else if (event.type === "assistant.progress") {
-          const progressText = `Codex 进度:\n${truncateForChannel(event.text)}`;
-          if (this.shouldDeliverProgressWithPolicy(deliveryPolicy, message.routeKey, event.kind)) {
-            await this.sendProgressText(message.routeKey, target, progressText);
-          } else if (deliveryPolicy.progress === "suppress") {
-            this.transcript?.localProgress?.(target, progressText);
+    const abortController = new AbortController();
+    this.routeAbortControllers.set(message.routeKey, abortController);
+    try {
+      await this.turnScheduler.run({
+        routeKey: message.routeKey,
+        sessionId: session.id,
+        enqueuedAt: new Date().toISOString(),
+      }, async () => {
+        const deliveryPolicy = this.deliveryPolicyFor(message);
+        if (deliveryPolicy.taskStart === "send") {
+          await this.sendText(target, [
+            "Codex 正在处理这条消息。",
+            "可发送 /status 查看状态，/stop 终止。",
+            sendFile ? "本轮已启用 /sendfile，只会发送最终回复中明确声明的文件。" : undefined,
+            remainingQueued > 0 ? `Queue: 后面还有 ${remainingQueued} 条` : undefined,
+          ].filter(Boolean).join("\n"));
+        }
+        await this.withTyping(target, async () => {
+          let finalText = "";
+          let finalPlanText = "";
+          const codexPrompt = sendFile ? withSendFileInstruction(prompt) : prompt;
+          for await (const event of this.codex.run(session.id, codexPrompt, collaborationMode ? { collaborationMode } : undefined)) {
+            if (event.type === "turn.started") {
+              this.state.setSessionStatus(session.id, {
+                type: "running",
+                turnId: event.turnId,
+                task: truncateForChannel(prompt, 120),
+              });
+            } else if (event.type === "assistant.progress") {
+              const progressText = `Codex 进度:\n${truncateForChannel(event.text)}`;
+              if (this.shouldDeliverProgressWithPolicy(deliveryPolicy, message.routeKey, event.kind)) {
+                await this.sendProgressText(message.routeKey, target, progressText);
+              } else if (deliveryPolicy.progress === "suppress") {
+                this.transcript?.localProgress?.(target, progressText);
+              }
+            } else if (event.type === "assistant.plan") {
+              finalPlanText = event.text;
+            } else if (event.type === "assistant.delta") {
+              finalText += event.text;
+            } else if (event.type === "assistant.completed") {
+              finalText = event.text;
+            } else if (event.type === "approval.requested") {
+              this.state.setSessionStatus(session.id, {
+                type: "waiting_approval",
+                detail: event.approval.reason ?? event.approval.kind,
+              });
+              const pending = this.approvals.create(message.routeKey, message.sender.id, event.approval);
+              await this.sendApprovalTextUntilDelivered(message.routeKey, target, pending);
+            } else if (event.type === "turn.completed") {
+              this.state.setSessionStatus(session.id, { type: "idle" });
+            } else if (event.type === "turn.failed") {
+              this.state.setSessionStatus(session.id, { type: "failed", error: event.error });
+              await this.sendText(target, `Codex 执行失败: ${event.error}`);
+            }
           }
-        } else if (event.type === "assistant.plan") {
-          finalPlanText = event.text;
-        } else if (event.type === "assistant.delta") {
-          finalText += event.text;
-        } else if (event.type === "assistant.completed") {
-          finalText = event.text;
-        } else if (event.type === "approval.requested") {
-          this.state.setSessionStatus(session.id, {
-            type: "waiting_approval",
-            detail: event.approval.reason ?? event.approval.kind,
-          });
-          const pending = this.approvals.create(message.routeKey, message.sender.id, event.approval);
-          await this.sendApprovalTextUntilDelivered(message.routeKey, target, pending);
-        } else if (event.type === "turn.completed") {
-          this.state.setSessionStatus(session.id, { type: "idle" });
-        } else if (event.type === "turn.failed") {
-          this.state.setSessionStatus(session.id, { type: "failed", error: event.error });
-          await this.sendText(target, `Codex 执行失败: ${event.error}`);
-        }
+          const composedFinalText = composeFinalAnswer(finalPlanText, finalText);
+          if (composedFinalText) {
+            const visibleText = sendFile ? stripBridgeSendFileRefs(composedFinalText) : composedFinalText;
+            if (visibleText) await this.sendText(target, visibleText);
+            if (sendFile) {
+              await this.sendRequestedFiles(target, composedFinalText, session.cwd);
+            }
+          }
+        });
+      }, { signal: abortController.signal });
+    } finally {
+      if (this.routeAbortControllers.get(message.routeKey) === abortController) {
+        this.routeAbortControllers.delete(message.routeKey);
       }
-      const composedFinalText = composeFinalAnswer(finalPlanText, finalText);
-      if (composedFinalText) {
-        const visibleText = sendFile ? stripBridgeSendFileRefs(composedFinalText) : composedFinalText;
-        if (visibleText) await this.sendText(target, visibleText);
-        if (sendFile) {
-          await this.sendRequestedFiles(target, composedFinalText, session.cwd);
-        }
-      }
-    });
+    }
   }
 
   private async resumeOrUseSession(
@@ -378,9 +423,19 @@ export class Bridge {
       await this.sendText(target, "缺少 Session ID，例如 /resume cdx-123");
       return;
     }
+    const claim = this.state.claimSessionOwner(message.routeKey, sessionId);
+    if (!claim.ok) {
+      await this.sendText(target, ownerConflictText(sessionId, claim.owner.ownerRouteKey));
+      return;
+    }
     try {
       const session = await this.codex.resumeSession(sessionId);
-      this.state.bindSession(message.routeKey, session);
+      const activated = this.state.activateOwnedSession(message.routeKey, session);
+      if (!activated.ok) {
+        if (claim.newlyClaimed) this.state.rollbackSessionOwnerClaim(message.routeKey, sessionId);
+        await this.sendText(target, ownerConflictText(sessionId, activated.owner?.ownerRouteKey ?? "unknown"));
+        return;
+      }
       const mode = this.syncRouteCollaborationModeFromSession(message.routeKey, session.id);
       await this.sendText(target, [
         "已绑定 Codex 会话",
@@ -390,6 +445,7 @@ export class Bridge {
         `Mode: ${mode}`,
       ].join("\n"));
     } catch (error) {
+      if (claim.newlyClaimed) this.state.rollbackSessionOwnerClaim(message.routeKey, sessionId);
       await this.sendText(target, error instanceof Error ? error.message : String(error));
     }
   }
@@ -446,6 +502,7 @@ export class Bridge {
     const queued = this.routeQueues.get(message.routeKey);
     const clearedQueued = queued?.length ?? 0;
     if (queued) queued.length = 0;
+    this.routeAbortControllers.get(message.routeKey)?.abort();
     await this.codex.cancel(binding.sessionId);
     this.approvals.cancelRoute(message.routeKey, "任务已停止");
     this.state.setSessionStatus(binding.sessionId, { type: "idle" });
@@ -756,14 +813,14 @@ export class Bridge {
       await this.deliverText(target, text);
     } catch (error) {
       this.logger.warn("channel text send failed", {
-        channel: this.channel.id,
+        channel: target.channelId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
   private async deliverText(target: ChannelTarget, text: string): Promise<void> {
-    await this.channel.sendText(target, text);
+    await this.channels.sendText(target, text);
     this.transcript?.outbound(target, text);
   }
 
@@ -777,7 +834,7 @@ export class Bridge {
       } catch (error) {
         failures += 1;
         this.logger.warn("approval message send failed", {
-          channel: this.channel.id,
+          channel: target.channelId,
           approvalKey: pending.approvalKey,
           failures,
           retryInMs: this.approvalSendRetryDelayMs,
@@ -803,7 +860,7 @@ export class Bridge {
     } catch (error) {
       this.progressSendSuppressedUntil.set(routeKey, Date.now() + PROGRESS_SEND_FAILURE_COOLDOWN_MS);
       this.logger.warn("progress message send failed", {
-        channel: this.channel.id,
+        channel: target.channelId,
         error: error instanceof Error ? error.message : String(error),
         cooldownMs: PROGRESS_SEND_FAILURE_COOLDOWN_MS,
       });
@@ -835,22 +892,22 @@ export class Bridge {
   }
 
   private async trySendMedia(target: ChannelTarget, media: ChannelMedia): Promise<boolean> {
-    const capabilities = this.channel.getCapabilities();
-    if (!capabilities.media || !this.channel.sendMedia) {
+    const capabilities = this.channels.getCapabilities(target.channelId);
+    if (!capabilities.media) {
       this.logger.warn("channel media send skipped", {
-        channel: this.channel.id,
+        channel: target.channelId,
         media: media.path ?? media.url ?? media.name,
         reason: "media unsupported",
       });
       return false;
     }
     try {
-      await this.channel.sendMedia(target, media);
+      await this.channels.sendMedia(target, media);
       this.transcript?.outboundMedia?.(target, media);
       return true;
     } catch (error) {
       this.logger.warn("channel media send failed", {
-        channel: this.channel.id,
+        channel: target.channelId,
         media: media.path ?? media.url ?? media.name,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -859,8 +916,8 @@ export class Bridge {
   }
 
   private async withTyping<T>(target: ChannelTarget, operation: () => Promise<T>): Promise<T> {
-    const capabilities = this.channel.getCapabilities();
-    if (!capabilities.typing || !this.channel.sendTyping) {
+    const capabilities = this.channels.getCapabilities(target.channelId);
+    if (!capabilities.typing) {
       return operation();
     }
     let stopped = false;
@@ -884,13 +941,13 @@ export class Bridge {
   }
 
   private async sendTyping(target: ChannelTarget, typing: boolean): Promise<void> {
-    const capabilities = this.channel.getCapabilities();
-    if (!capabilities.typing || !this.channel.sendTyping) return;
+    const capabilities = this.channels.getCapabilities(target.channelId);
+    if (!capabilities.typing) return;
     try {
-      await this.channel.sendTyping(target, typing);
+      await this.channels.sendTyping(target, typing);
     } catch (error) {
       this.logger.warn("channel typing send failed", {
-        channel: this.channel.id,
+        channel: target.channelId,
         typing,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -899,7 +956,7 @@ export class Bridge {
 
   private async statusText(message: ChannelMessage): Promise<string> {
     const routeKey = message.routeKey;
-    const channelStatus = await this.channel.getStatus();
+    const channelStatus = await this.channels.getStatus(message.channelId);
     const binding = this.state.getBinding(routeKey);
     const localSession = binding ? this.state.getSession(binding.sessionId) : undefined;
     const adapterStatus: CodexSessionStatus = binding
@@ -985,7 +1042,7 @@ export class Bridge {
 
   private async debugText(message: ChannelMessage): Promise<string> {
     const status = await this.statusText(message);
-    const capabilities = this.channel.getCapabilities();
+    const capabilities = this.channels.getCapabilities(message.channelId);
     const sessions = this.state.listSessions(message.routeKey);
     return [
       status,
@@ -1071,7 +1128,7 @@ export class Bridge {
   }
 
   private deliveryPolicyFor(message: ChannelMessage | undefined): ChannelDeliveryPolicy {
-    return normalizeChannelDeliveryPolicy(this.channel.getDeliveryPolicy?.(message) ?? DEFAULT_CHANNEL_DELIVERY_POLICY);
+    return normalizeChannelDeliveryPolicy(message ? this.channels.getDeliveryPolicy(message) : DEFAULT_CHANNEL_DELIVERY_POLICY);
   }
 
   private refreshCommandFor(
@@ -1167,6 +1224,21 @@ function truncateForChannel(text: string, maxLength = 600): string {
   const normalized = text.trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+function ownerConflictError(sessionId: string, ownerRouteKey: string): Error {
+  return new Error(`Codex session ${sessionId} is already owned by ${ownerRouteKey}`);
+}
+
+function ownerConflictText(sessionId: string, ownerRouteKey: string): string {
+  return [
+    "无法绑定 Codex 会话",
+    `Session: ${sessionId}`,
+    "原因: 该 session 已绑定到其他聊天上下文。",
+    `Owner: ${ownerRouteKey}`,
+    "",
+    "可发送 /new 创建当前上下文的新会话。",
+  ].join("\n");
 }
 
 function commandBody(rawText: string, command: string): string {

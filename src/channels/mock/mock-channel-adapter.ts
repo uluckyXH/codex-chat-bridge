@@ -35,20 +35,30 @@ export interface SentMockTyping {
 }
 
 export interface MockChannelAdapterOptions {
+  id?: string;
+  label?: string;
+  accountId?: string;
   media?: boolean;
   typing?: boolean;
+  direct?: boolean;
+  group?: boolean;
+  thread?: boolean;
 }
 
 export class MockChannelAdapter implements ChannelAdapter {
-  readonly id: string = "mock";
-  readonly label: string = "Mock Channel";
+  readonly id: string;
+  readonly label: string;
   readonly sentMessages: SentMockMessage[] = [];
   readonly sentMedia: SentMockMedia[] = [];
   readonly sentTyping: SentMockTyping[] = [];
   private handler?: ChannelMessageHandler;
-  private state: ChannelStatus = { channelId: this.id, state: "stopped" };
+  private state: ChannelStatus;
 
-  constructor(private readonly options: MockChannelAdapterOptions = {}) {}
+  constructor(private readonly options: MockChannelAdapterOptions = {}) {
+    this.id = options.id ?? "mock";
+    this.label = options.label ?? "Mock Channel";
+    this.state = { channelId: this.id, state: "stopped" };
+  }
 
   async start(): Promise<void> {
     this.state = { ...this.state, state: "connected" };
@@ -59,7 +69,7 @@ export class MockChannelAdapter implements ChannelAdapter {
   }
 
   async login(): Promise<ChannelLoginResult> {
-    this.state = { ...this.state, state: "connected", account: "mock-account" };
+    this.state = { ...this.state, state: "connected", account: this.options.accountId ?? "mock-account" };
     return { state: "connected", message: "mock channel does not require login" };
   }
 
@@ -72,8 +82,9 @@ export class MockChannelAdapter implements ChannelAdapter {
       text: true,
       media: this.options.media ?? false,
       typing: this.options.typing ?? false,
-      direct: true,
-      group: true,
+      direct: this.options.direct ?? true,
+      group: this.options.group ?? true,
+      thread: this.options.thread ?? true,
       login: "none",
       messageUpdate: false,
       streamingHint: false,
@@ -118,9 +129,10 @@ export class MockChannelAdapter implements ChannelAdapter {
     if (!this.handler) throw new Error("mock channel handler is not registered");
     const senderId = options.senderId ?? "mock-user";
     const conversationId = options.conversationId ?? senderId;
+    const accountId = this.options.accountId ?? "mock-account";
     const routeKey = buildRouteKey({
       channelId: this.id,
-      accountId: "mock-account",
+      accountId,
       conversationKind: "direct",
       conversationId,
     });
@@ -128,7 +140,7 @@ export class MockChannelAdapter implements ChannelAdapter {
       id: `mock-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       routeKey,
       channelId: this.id,
-      accountId: "mock-account",
+      accountId,
       sender: { id: senderId, displayName: "Mock User" },
       conversation: { id: conversationId, kind: "direct", displayName: "Mock Direct" },
       text,

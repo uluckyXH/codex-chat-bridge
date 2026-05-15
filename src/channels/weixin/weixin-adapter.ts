@@ -33,6 +33,7 @@ import {
 } from "./weixin-media.js";
 
 export interface WeixinAdapterOptions {
+  id?: string;
   sourceVersion?: string;
   accountId?: string;
   baseUrl?: string;
@@ -98,7 +99,7 @@ const WEIXIN_DELIVERY_POLICY: ChannelDeliveryPolicy = {
 };
 
 export class WeixinAdapter implements ChannelAdapter {
-  readonly id = "weixin";
+  readonly id: string;
   readonly label = "Weixin Adapter";
   private readonly sourceVersion: string;
   private readonly botType: string;
@@ -127,6 +128,7 @@ export class WeixinAdapter implements ChannelAdapter {
   private readonly typingTickets = new Map<string, CachedTypingTicket>();
 
   constructor(private readonly options: WeixinAdapterOptions = {}) {
+    this.id = options.id ?? "weixin";
     this.sourceVersion = options.sourceVersion ?? "2.4.3";
     this.botType = options.botType ?? DEFAULT_BOT_TYPE;
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
@@ -249,7 +251,8 @@ export class WeixinAdapter implements ChannelAdapter {
       media: true,
       typing: true,
       direct: true,
-      group: true,
+      group: false,
+      thread: false,
       login: "qr",
       messageUpdate: false,
       streamingHint: true,
@@ -484,7 +487,7 @@ export class WeixinAdapter implements ChannelAdapter {
 
   private async handleInbound(accountId: string, raw: WeixinMessage): Promise<void> {
     if (!this.handler) return;
-    const message = weixinMessageToChannelMessage(accountId, raw);
+    const message = weixinMessageToChannelMessage(this.id, accountId, raw);
     this.status = {
       ...this.status,
       state: "connected",
@@ -691,19 +694,19 @@ function retryDelayMs(baseDelayMs: number, attempt: number): number {
   return baseDelayMs * (2 ** attempt);
 }
 
-export function weixinMessageToChannelMessage(accountId: string, raw: WeixinMessage): ChannelMessage {
+export function weixinMessageToChannelMessage(channelId: string, accountId: string, raw: WeixinMessage): ChannelMessage {
   const senderId = raw.from_user_id || "unknown";
   const conversationKind = raw.group_id ? "group" : "direct";
   const conversationId = raw.group_id || senderId;
   return {
     id: String(raw.message_id ?? raw.client_id ?? raw.seq ?? `weixin-${Date.now()}`),
     routeKey: buildRouteKey({
-      channelId: "weixin",
+      channelId,
       accountId,
       conversationKind,
       conversationId,
     }),
-    channelId: "weixin",
+    channelId,
     accountId,
     sender: { id: senderId },
     conversation: { id: conversationId, kind: conversationKind },

@@ -71,6 +71,7 @@ export interface ChannelCapabilities {
   typing: boolean;
   direct: boolean;
   group: boolean;
+  thread: boolean;
   login: ChannelLoginMode;
   messageUpdate: boolean;
   streamingHint: boolean;

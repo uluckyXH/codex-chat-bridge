@@ -54,8 +54,11 @@
 - 新渠道必须把原始消息转换为统一 `ChannelMessage`。
 - 新渠道必须提供稳定 `routeKey`。
 - 新渠道必须声明 `ChannelCapabilities`。
+- `ChannelCapabilities` 必须明确声明 `direct`、`group`、`thread`，且只把已验证可用的会话形态声明为 `true`。
 - 新渠道必须提供 `getStatus()`。
 - 如果渠道需要登录，必须提供 `login()` 或明确返回 `login_required` 状态。
+- 平台投递差异必须优先通过 `ChannelDeliveryPolicy`、capability 或 adapter-owned 队列/重试表达。
+- 平台登录态、token、cursor、联系人/群/thread 缓存属于 adapter-owned state，不写进 Bridge Core 的通用状态。
 
 禁止：
 

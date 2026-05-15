@@ -22,6 +22,9 @@
 - `weixin-ret2-context-token.zh-CN.md`
   微信 `sendmessage ret=-2` 与 `context_token` 问题说明。包含大白话解释、专业排障判断、现有缓解策略和后续优化方向。
 
+- `multi-channel-design.zh-CN.md`
+  多渠道接入与会话绑定设计。说明多渠道同时对话、routeKey、session 唯一归属、ChannelRegistry、并发模型和后续实施顺序。
+
 - `requirements.md`
   早期英文需求草稿。保留作参考，不作为当前主设计依据。
 

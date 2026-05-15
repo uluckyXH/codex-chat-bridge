@@ -44,3 +44,14 @@ test("displayWeixinQrCode falls back to login link when QR rendering fails", asy
   assert.match(rendered, /若二维码未能显示或无法使用/);
   assert.match(rendered, /https:\/\/login\.example\/fallback/);
 });
+
+test("displayWeixinQrCode renders with the bundled qrcode-terminal loader", async () => {
+  const { output, chunks } = captureOutput();
+
+  await displayWeixinQrCode("https://login.example/real-loader", { output });
+
+  const rendered = chunks.join("");
+  assert.match(rendered, /请用手机微信扫描下面的二维码完成登录。/);
+  assert.match(rendered, /[▀▄█]/);
+  assert.match(rendered, /https:\/\/login\.example\/real-loader/);
+});

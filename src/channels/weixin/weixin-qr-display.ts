@@ -39,5 +39,7 @@ export async function displayWeixinQrCode(
 
 async function loadQrCodeGenerator(): Promise<QrCodeGenerator> {
   const qrTerminal = await import("qrcode-terminal");
-  return qrTerminal.default.generate;
+  return (text, options, callback) => {
+    qrTerminal.default.generate(text, options, callback);
+  };
 }

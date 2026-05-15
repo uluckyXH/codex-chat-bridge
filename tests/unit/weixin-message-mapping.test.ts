@@ -5,7 +5,7 @@ import { weixinMessageToChannelMessage } from "../../src/channels/weixin/weixin-
 import { normalizeWeixinAccountId } from "../../src/channels/weixin/weixin-account-store.js";
 
 test("weixinMessageToChannelMessage maps direct text messages to generic channel messages", () => {
-  const message = weixinMessageToChannelMessage("bot-1", {
+  const message = weixinMessageToChannelMessage("weixin", "bot-1", {
     message_id: 123,
     from_user_id: "user@im.wechat",
     create_time_ms: 1_700_000_000_000,
@@ -21,7 +21,7 @@ test("weixinMessageToChannelMessage maps direct text messages to generic channel
 });
 
 test("weixinMessageToChannelMessage separates group route from sender", () => {
-  const message = weixinMessageToChannelMessage("bot-1", {
+  const message = weixinMessageToChannelMessage("weixin", "bot-1", {
     message_id: 124,
     from_user_id: "user@im.wechat",
     group_id: "group-1",
@@ -32,6 +32,17 @@ test("weixinMessageToChannelMessage separates group route from sender", () => {
   assert.equal(message.conversation.kind, "group");
   assert.equal(message.conversation.id, "group-1");
   assert.equal(message.sender.id, "user@im.wechat");
+});
+
+test("weixinMessageToChannelMessage uses adapter instance channel id", () => {
+  const message = weixinMessageToChannelMessage("weixin-main", "bot-1", {
+    message_id: 125,
+    from_user_id: "user@im.wechat",
+    item_list: [{ type: 1, text_item: { text: "hello instance" } }],
+  });
+
+  assert.equal(message.channelId, "weixin-main");
+  assert.equal(message.routeKey, "weixin-main:bot-1:direct:user@im.wechat");
 });
 
 test("normalizeWeixinAccountId creates file-safe account ids", () => {

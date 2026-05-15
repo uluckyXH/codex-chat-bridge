@@ -118,6 +118,7 @@ export class TerminalChannelAdapter implements ChannelAdapter {
       typing: false,
       direct: true,
       group: false,
+      thread: false,
       login: "none",
       messageUpdate: false,
       streamingHint: false,

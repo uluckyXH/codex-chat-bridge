@@ -130,6 +130,7 @@ Terminal / Weixin / future channels
 - Approval Manager 不 import `openclaw-weixin` 类型。
 - 具体渠道协议差异只存在于 `src/channels/<channel>/`。
 - 具体渠道的投递差异应优先表达为通用 `ChannelCapabilities`、delivery policy、route policy 或 adapter-owned 行为，而不是在 Bridge Core 中散落渠道名判断。
+- 渠道支持私聊、群聊、typing、媒体或消息编辑等能力时，必须由 adapter 通过 capabilities 声明；Bridge Core 只按能力使用通用接口。
 - 如果短期必须在 Bridge Core 做渠道特例，需要有测试覆盖，并在文档或测试报告里说明后续如何收敛成通用策略。
 - 新渠道接入时，只要实现 `ChannelAdapter` 即可复用 Codex Adapter、命令、审批、状态和日志。
 
@@ -187,6 +188,7 @@ type ChannelCapabilities = {
   typing: boolean;
   direct: boolean;
   group: boolean;
+  thread: boolean;
   login: "none" | "qr" | "token" | "external";
   messageUpdate: boolean;
   streamingHint: boolean;
@@ -267,6 +269,18 @@ WeixinAdapter implements ChannelAdapter
 - `/new`、`/status`、`/OK`、`/NO`、`/stop` 等命令含义。
 - Codex 审批决策。
 - 业务状态持久化。
+
+### 3.0.5 多渠道同时接入
+
+多渠道设计详见 `docs/multi-channel-design.zh-CN.md`。核心结论：
+
+- 多个 `ChannelAdapter` 可以在同一个中间件进程里同时运行。
+- 多渠道的出站投递需要通过 `ChannelRegistry` 按 `ChannelTarget.channelId` 找回正确 adapter。
+- `channelId` 在多渠道运行时必须是渠道实例 ID，并且全局唯一。
+- 普通 prompt 继续按 `routeKey` 串行；不同 route 可以并行运行不同 Codex session；全局 `maxConcurrentTurns` 作为可选背压保留，默认不限制。
+- Codex session 必须有唯一归属：`sessionId -> ownerRouteKey`。一个 session 一旦绑定到某个 route，不能再被另一个 route 绑定，除非后续实现显式管理员转移。
+- `/OK`、`/NO`、`/stop`、`/permission`、`/progress`、`/sendfile` 默认都只作用于当前 route。
+- 核心多渠道内核的实施顺序和模块接口草案以 `docs/multi-channel-design.zh-CN.md` 第 13 章为准；本轮不做配置文件、启动向导、真实第二渠道或 `/cwd`。
 
 ### 3.1 Channel Adapter
 
@@ -455,7 +469,7 @@ codex-wechat-bridge codex test
 - 是否支持 context token。
 - 是否支持 accountId。
 
-内部使用 `ChannelCapabilities`：
+内部使用 `ChannelCapabilities`。当前代码里的基础能力包括：
 
 ```ts
 type ChannelCapabilities = {
@@ -464,10 +478,14 @@ type ChannelCapabilities = {
   typing: boolean;
   direct: boolean;
   group: boolean;
-  contextToken: boolean;
-  multiAccount: boolean;
+  thread: boolean;
+  login: "none" | "qr" | "token" | "external";
+  messageUpdate: boolean;
+  streamingHint: boolean;
 };
 ```
+
+能力声明用于管理不同渠道适配方案：只支持私聊的渠道声明 `group=false, thread=false`；支持群聊或 thread 的渠道由 adapter 把平台原始消息映射到 `ChannelConversation.kind`。Bridge/ChannelRegistry 启动时应展示 capabilities，并在收到不支持的会话形态时拒绝或降级。capability 代表已验证运行能力，不代表平台协议里理论可能出现的字段。
 
 ### 4.3 Adapter 版本目录
 

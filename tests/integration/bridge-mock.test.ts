@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Bridge } from "../../src/bridge/bridge.js";
+import { ChannelRegistry } from "../../src/channels/registry.js";
 import { MockChannelAdapter } from "../../src/channels/mock/mock-channel-adapter.js";
 import { MockCodexAdapter } from "../../src/codex/mock-codex-adapter.js";
 import type { CodexAdapter, CodexCollaborationMode, CodexEvent, CodexRunOptions, CodexSession, CodexSessionContextUsage, CodexSessionStatus, CodexSessionSummary, StartSessionInput } from "../../src/codex/types.js";
@@ -177,6 +178,24 @@ class AdapterApprovalIdCodexAdapter extends MockCodexAdapter {
         command: "touch app-server-approved.txt",
       },
     };
+    yield { type: "turn.completed", sessionId, turnId };
+  }
+}
+
+class ParallelProbeCodexAdapter extends MockCodexAdapter {
+  active = 0;
+  maxActive = 0;
+  readonly prompts: string[] = [];
+
+  override async *run(sessionId: string, prompt: string): AsyncIterable<CodexEvent> {
+    this.prompts.push(prompt);
+    this.active += 1;
+    this.maxActive = Math.max(this.maxActive, this.active);
+    const turnId = `parallel-turn-${this.prompts.length}`;
+    yield { type: "turn.started", sessionId, turnId };
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    yield { type: "assistant.completed", sessionId, turnId, text: `完成: ${prompt}` };
+    this.active -= 1;
     yield { type: "turn.completed", sessionId, turnId };
   }
 }
@@ -1093,6 +1112,64 @@ test("Bridge binds first route to initial session when provided", async () => {
 
   assert.ok(channel.sentMessages.some((message) => message.text.includes("Mock Codex 回复: 继续已有会话")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes(`Session: \`${initial.id}\``)));
+});
+
+test("Bridge routes two mock channels through one registry without cross-channel replies", async () => {
+  const channelA = new MockChannelAdapter({ id: "mock-a" });
+  const channelB = new MockChannelAdapter({ id: "mock-b" });
+  const registry = new ChannelRegistry({ channels: [channelA, channelB] });
+  const codex = new ParallelProbeCodexAdapter();
+  const bridge = new Bridge({ channels: registry, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channelA.emitText("来自 A");
+  await channelB.emitText("来自 B");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.equal(channelA.sentMessages.some((message) => message.target.channelId !== "mock-a"), false);
+  assert.equal(channelB.sentMessages.some((message) => message.target.channelId !== "mock-b"), false);
+  assert.ok(channelA.sentMessages.some((message) => message.text === "完成: 来自 A"));
+  assert.ok(channelB.sentMessages.some((message) => message.text === "完成: 来自 B"));
+  assert.equal(codex.maxActive, 2);
+});
+
+test("Bridge rejects binding one Codex session to another route", async () => {
+  const channelA = new MockChannelAdapter({ id: "mock-a" });
+  const channelB = new MockChannelAdapter({ id: "mock-b" });
+  const registry = new ChannelRegistry({ channels: [channelA, channelB] });
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channels: registry, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channelA.emitText("/new");
+  await channelB.emitText("/resume mock-codex-1");
+  await bridge.stop();
+
+  const conflict = channelB.sentMessages.at(-1)?.text ?? "";
+  assert.ok(conflict.includes("无法绑定 Codex 会话"));
+  assert.ok(conflict.includes("Owner: mock-a:mock-account:direct:mock-user"));
+});
+
+test("Bridge keeps approvals scoped to the originating channel route", async () => {
+  const channelA = new MockChannelAdapter({ id: "mock-a" });
+  const channelB = new MockChannelAdapter({ id: "mock-b" });
+  const registry = new ChannelRegistry({ channels: [channelA, channelB] });
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channels: registry, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channelB.emitText("请触发审批 approval");
+  await bridge.waitForIdle();
+  await channelA.emitText("/OK");
+  await channelB.emitText("/OK");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.ok(channelB.sentMessages.some((message) => message.text.includes("Codex 请求审批")));
+  assert.ok(channelA.sentMessages.some((message) => message.text === "当前没有待处理审批。"));
+  assert.equal(codex.resolvedApprovals.length, 1);
+  assert.equal(codex.resolvedApprovals[0].decision, "approve");
 });
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
