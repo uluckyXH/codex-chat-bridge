@@ -1114,6 +1114,29 @@ test("Bridge binds first route to initial session when provided", async () => {
   assert.ok(channel.sentMessages.some((message) => message.text.includes(`Session: \`${initial.id}\``)));
 });
 
+test("Bridge asks unbound routes to choose a session when policy is ask", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({
+    channel,
+    codex,
+    cwd: process.cwd(),
+    unboundRoutePolicy: "ask",
+  });
+
+  await bridge.start();
+  await channel.emitText("先不要自动创建");
+  await bridge.waitForIdle();
+  await channel.emitText("/new");
+  await channel.emitText("现在可以执行");
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.equal(codex.runs.map((run) => run.prompt).includes("先不要自动创建"), false);
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("请先发送 /new 创建新会话")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("Mock Codex 回复: 现在可以执行")));
+});
+
 test("Bridge routes two mock channels through one registry without cross-channel replies", async () => {
   const channelA = new MockChannelAdapter({ id: "mock-a" });
   const channelB = new MockChannelAdapter({ id: "mock-b" });

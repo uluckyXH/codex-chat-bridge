@@ -17,6 +17,7 @@
     "cli:mock": "npm run build && node dist/src/cli.js codex test",
     "cli:terminal:mock": "npm run build && node dist/src/cli.js terminal mock",
     "cli:terminal:codex": "npm run build && node dist/src/cli.js terminal codex",
+    "cli:serve": "npm run build && node dist/src/cli.js serve",
     "cli:weixin:status": "npm run build && node dist/src/cli.js weixin status",
     "cli:weixin:login": "npm run build && node dist/src/cli.js weixin login",
     "cli:weixin:codex": "npm run build && node dist/src/cli.js weixin codex"

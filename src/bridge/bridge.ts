@@ -30,6 +30,7 @@ export interface BridgeOptions {
   transcript?: TranscriptSink;
   cwd?: string;
   initialSessionId?: string;
+  unboundRoutePolicy?: UnboundRoutePolicy;
   progressMode?: ProgressDeliveryMode;
   approvalSendRetryDelayMs?: number;
 }
@@ -43,6 +44,7 @@ interface QueuedPrompt {
 }
 
 export type ProgressDeliveryMode = "brief" | "detailed" | "silent";
+export type UnboundRoutePolicy = "auto_new" | "ask";
 
 const PROGRESS_SEND_FAILURE_COOLDOWN_MS = 60_000;
 const APPROVAL_SEND_RETRY_DELAY_MS = 10_000;
@@ -57,6 +59,7 @@ export class Bridge {
   private readonly logger: Logger;
   private readonly transcript?: TranscriptSink;
   private readonly cwd: string;
+  private readonly unboundRoutePolicy: UnboundRoutePolicy;
   private readonly defaultProgressMode: ProgressDeliveryMode;
   private readonly approvalSendRetryDelayMs: number;
   private readonly routeProgressModes = new Map<string, ProgressDeliveryMode>();
@@ -83,6 +86,7 @@ export class Bridge {
     this.transcript = options.transcript;
     this.cwd = options.cwd ?? process.cwd();
     this.initialSessionId = options.initialSessionId;
+    this.unboundRoutePolicy = options.unboundRoutePolicy ?? "auto_new";
     this.defaultProgressMode = options.progressMode ?? "brief";
     this.approvalSendRetryDelayMs = options.approvalSendRetryDelayMs ?? APPROVAL_SEND_RETRY_DELAY_MS;
   }
@@ -289,6 +293,10 @@ export class Bridge {
     prompt: string,
     options?: { collaborationMode?: CodexCollaborationMode; sendFile?: boolean },
   ): Promise<void> {
+    if (this.shouldAskBeforeBindingSession(message)) {
+      await this.sendText(target, this.unboundRoutePromptText(message));
+      return;
+    }
     const queue = this.routeQueues.get(message.routeKey) ?? [];
     const pendingAhead = queue.length + (this.routeWorkers.has(message.routeKey) ? 1 : 0);
     queue.push({
@@ -317,6 +325,20 @@ export class Bridge {
       }
     });
     this.routeWorkers.set(routeKey, worker);
+  }
+
+  private shouldAskBeforeBindingSession(message: ChannelMessage): boolean {
+    return this.unboundRoutePolicy === "ask"
+      && !this.state.getBinding(message.routeKey)
+      && !this.initialSessionId;
+  }
+
+  private unboundRoutePromptText(message: ChannelMessage): string {
+    return [
+      "当前聊天还没有绑定 Codex 会话。",
+      "请先发送 /new 创建新会话，或发送 /resume <session-id> 绑定已有会话。",
+      `Route: ${message.routeKey}`,
+    ].join("\n");
   }
 
   private async drainRouteQueue(routeKey: string): Promise<void> {

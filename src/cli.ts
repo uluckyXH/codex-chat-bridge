@@ -7,6 +7,7 @@ import { TerminalChannelAdapter } from "./channels/terminal/terminal-channel-ada
 import { WeixinAdapter } from "./channels/weixin/weixin-adapter.js";
 import { displayWeixinQrCode } from "./channels/weixin/weixin-qr-display.js";
 import { checkCodexCli, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
+import { runServe } from "./cli/serve.js";
 import { AppServerCodexAdapter } from "./codex/app-server-codex-adapter.js";
 import { ExecCodexAdapter } from "./codex/exec-codex-adapter.js";
 import { MockCodexAdapter } from "./codex/mock-codex-adapter.js";
@@ -22,6 +23,8 @@ interface StartupOptions {
   yesDangerouslyFull?: boolean;
   cwd?: string;
   progressMode?: ProgressDeliveryMode;
+  maxConcurrentTurns?: number;
+  noInteractive?: boolean;
 }
 
 type RealCodexAdapterMode = "app-server" | "exec";
@@ -77,6 +80,11 @@ async function main(argv: string[]): Promise<void> {
 
   if (area === "start" || area === "mock") {
     await runTerminalBridge("mock", parseStartupOptions(rest));
+    return;
+  }
+
+  if (area === "serve") {
+    await runServe(parseStartupOptions([command, ...rest].filter((item): item is string => Boolean(item))));
     return;
   }
 
@@ -146,6 +154,15 @@ function parseStartupOptions(args: string[]): StartupOptions {
       const mode = parseProgressDeliveryMode(value);
       if (!mode) throw new Error(`${arg} 只能是 brief、detailed 或 silent`);
       options.progressMode = mode;
+    } else if (arg === "--max-concurrent-turns") {
+      const value = args[++index];
+      const parsed = Number.parseInt(value ?? "", 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error("--max-concurrent-turns 需要正整数");
+      }
+      options.maxConcurrentTurns = parsed;
+    } else if (arg === "--no-interactive") {
+      options.noInteractive = true;
     } else {
       throw new Error(`未知启动参数: ${arg}`);
     }
@@ -461,12 +478,15 @@ function printHelp(): void {
     "  codex-wechat-bridge codex test     运行本地 mock Codex/Channel 流程",
     "  codex-wechat-bridge terminal mock  启动本地终端通道 + MockCodex",
     "  codex-wechat-bridge terminal codex 启动本地终端通道 + Codex",
+    "  codex-wechat-bridge serve          启动多渠道配置向导（当前真实渠道支持微信）",
     "    --session new|last|<id>          选择新会话或已有 Codex 会话",
     "    --cwd <dir>, --workdir <dir>     设置新会话工作目录；目录不存在会自动创建",
     "    --permission approval|full       设置安全沙箱或完全权限",
     "    --codex-adapter app-server|exec  设置 Codex 接入方式；默认 app-server，支持微信审批",
     "    --yes-dangerously-full           非交互确认完全权限",
     "    --progress brief|detailed|silent 设置默认进度投递模式（微信渠道固定禁用）",
+    "    --max-concurrent-turns <n>       设置全局 Codex turn 并发上限；默认不限制",
+    "    --no-interactive                 非交互启动；需要已有微信登录态",
     "  codex-wechat-bridge weixin codex   启动真实微信通道 + Codex app-server",
     "  codex-wechat-bridge weixin status  查看 WeixinAdapter 当前状态",
     "  codex-wechat-bridge weixin login   显示终端二维码并等待微信扫码登录",
