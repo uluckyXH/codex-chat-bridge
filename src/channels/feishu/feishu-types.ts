@@ -43,6 +43,10 @@ export interface FeishuSentMessageData {
   create_time?: string;
 }
 
+export interface FeishuReactionData {
+  reaction_id?: string;
+}
+
 export interface FeishuSdkClient {
   im: {
     message: {
@@ -68,6 +72,24 @@ export interface FeishuSdkClient {
           receive_id_type: "open_id" | "user_id" | "union_id" | "email" | "chat_id";
         };
       }): Promise<FeishuApiResponse<FeishuSentMessageData>>;
+    };
+    messageReaction: {
+      create(payload: {
+        path: {
+          message_id: string;
+        };
+        data: {
+          reaction_type: {
+            emoji_type: string;
+          };
+        };
+      }): Promise<FeishuApiResponse<FeishuReactionData>>;
+      delete(payload: {
+        path: {
+          message_id: string;
+          reaction_id: string;
+        };
+      }): Promise<FeishuApiResponse>;
     };
   };
   request?<T = FeishuApiResponse>(payload: {

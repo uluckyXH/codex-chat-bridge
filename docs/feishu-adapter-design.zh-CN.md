@@ -165,7 +165,7 @@ getCapabilities() {
   return {
     text: true,
     media: false,
-    typing: false,
+    typing: true,
     direct: true,
     group: false,
     thread: false,
@@ -179,7 +179,7 @@ getCapabilities() {
 说明：
 
 - 飞书官方能力支持群聊、thread、媒体、反应和卡片，但第一阶段 adapter 只声明实际已实现能力。
-- `typing` 第一阶段不做；官方插件用 reaction 作为处理提示，这可以后续补。
+- `typing` 用官方插件同款 reaction 方案实现：处理期间给入站消息添加 `Typing` 表情，完成后移除。
 - `messageUpdate` 第一阶段不做；进度先以普通文本投递。
 - `streamingHint` 可以为 true，表示该渠道适合接收进度/阶段性输出；实际是否发送由 `ChannelDeliveryPolicy` 和 `/progress` 控制。
 
@@ -254,7 +254,7 @@ sender.open_id !== botOpenId
 暂时跳过：
 
 - `chat_type === "group"`
-- reaction 事件
+- 用户 reaction 事件
 - card action 事件
 - bot 加群/退群事件
 - drive comment 事件
@@ -370,6 +370,39 @@ event.message.create_time
   deliveredAt: new Date().toISOString(),
   raw: response
 }
+```
+
+## 输入状态 / 处理中表情
+
+飞书没有像微信 `sendtyping` 这样的一级 typing 接口。官方插件的处理方式是：
+
+1. 收到用户消息后，使用原消息 `message_id` 调用 `im.messageReaction.create`。
+2. reaction 类型使用飞书内置表情 `Typing`，视觉上是敲键盘/输入中的提示。
+3. Codex turn 结束、失败或被 `/stop` 停止后，使用返回的 `reaction_id` 调用 `im.messageReaction.delete` 移除。
+4. 添加或删除失败只记录状态，不阻断消息处理和最终回复。
+
+Bridge Core 已经在 Codex turn 生命周期里调用通用 `sendTyping(target, true/false)`。飞书 adapter 因此只需要把 `target.context.sourceMessageId` 映射到 reaction API：
+
+```ts
+await client.im.messageReaction.create({
+  path: { message_id: sourceMessageId },
+  data: {
+    reaction_type: {
+      emoji_type: "Typing",
+    },
+  },
+});
+```
+
+删除时：
+
+```ts
+await client.im.messageReaction.delete({
+  path: {
+    message_id: sourceMessageId,
+    reaction_id: reactionId,
+  },
+});
 ```
 
 ## 私聊与 session 绑定

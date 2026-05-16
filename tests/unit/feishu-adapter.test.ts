@@ -33,7 +33,7 @@ test("FeishuAdapter starts websocket and declares private text capabilities", as
   assert.deepEqual(adapter.getCapabilities(), {
     text: true,
     media: false,
-    typing: false,
+    typing: true,
     direct: true,
     group: false,
     thread: false,
@@ -117,4 +117,53 @@ test("FeishuAdapter sendText falls back to chat_id create when reply fails", asy
   assert.equal(factory.client.createPayloads[0].params.receive_id_type, "chat_id");
   assert.equal(factory.client.createPayloads[0].data.receive_id, "oc_user");
   assert.match(factory.client.sentTexts().at(-1) ?? "", /回退发送/);
+});
+
+test("FeishuAdapter uses Typing reaction as typing indicator", async () => {
+  const factory = new FakeFeishuTransportFactory();
+  const adapter = new FeishuAdapter({ ...credentials, transportFactory: factory, connectOnStart: false });
+  await adapter.start();
+  const target = {
+    channelId: "feishu",
+    routeKey: "feishu:work:direct:oc_user",
+    accountId: "work",
+    conversation: { id: "oc_user", kind: "direct" as const },
+    recipient: { id: "ou_user" },
+    context: { sourceMessageId: "om_source" },
+  };
+
+  await adapter.sendTyping(target, true);
+  await adapter.sendTyping(target, true);
+  await adapter.sendTyping(target, false);
+
+  assert.equal(factory.client.reactionCreatePayloads.length, 1);
+  assert.equal(factory.client.reactionCreatePayloads[0].path.message_id, "om_source");
+  assert.equal(factory.client.reactionCreatePayloads[0].data.reaction_type.emoji_type, "Typing");
+  assert.deepEqual(factory.client.reactionDeletePayloads, [{
+    path: {
+      message_id: "om_source",
+      reaction_id: "react_typing_1",
+    },
+  }]);
+});
+
+test("FeishuAdapter typing reaction failure does not degrade channel", async () => {
+  const factory = new FakeFeishuTransportFactory();
+  factory.client.reactionCreateError = new Error("reaction permission denied");
+  const adapter = new FeishuAdapter({ ...credentials, transportFactory: factory, connectOnStart: false });
+  await adapter.start();
+
+  await adapter.sendTyping({
+    channelId: "feishu",
+    routeKey: "feishu:work:direct:oc_user",
+    accountId: "work",
+    conversation: { id: "oc_user", kind: "direct" },
+    recipient: { id: "ou_user" },
+    context: { sourceMessageId: "om_source" },
+  }, true);
+
+  const status = await adapter.getStatus();
+  assert.equal(status.state, "connected");
+  assert.equal(status.lastError, undefined);
+  assert.match(String(status.details?.lastTypingError), /reaction permission denied/);
 });

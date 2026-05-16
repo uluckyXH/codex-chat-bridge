@@ -4,6 +4,7 @@ import type {
   FeishuEventDispatcher,
   FeishuEventHandlers,
   FeishuMessageReceiveEvent,
+  FeishuReactionData,
   FeishuSdkClient,
   FeishuSentMessageData,
   FeishuTransportFactory,
@@ -15,6 +16,8 @@ import type {
 export class FakeFeishuClient implements FeishuSdkClient {
   readonly replyPayloads: Array<Parameters<FeishuSdkClient["im"]["message"]["reply"]>[0]> = [];
   readonly createPayloads: Array<Parameters<FeishuSdkClient["im"]["message"]["create"]>[0]> = [];
+  readonly reactionCreatePayloads: Array<Parameters<FeishuSdkClient["im"]["messageReaction"]["create"]>[0]> = [];
+  readonly reactionDeletePayloads: Array<Parameters<FeishuSdkClient["im"]["messageReaction"]["delete"]>[0]> = [];
   probeResponse: FeishuApiResponse<{ pingBotInfo?: { botID?: string; botName?: string } }> = {
     code: 0,
     data: {
@@ -32,7 +35,16 @@ export class FakeFeishuClient implements FeishuSdkClient {
     code: 0,
     data: { message_id: "om_create", chat_id: "oc_direct" },
   };
+  reactionCreateResponse: FeishuApiResponse<FeishuReactionData> = {
+    code: 0,
+    data: { reaction_id: "react_typing_1" },
+  };
+  reactionDeleteResponse: FeishuApiResponse = {
+    code: 0,
+  };
   replyError?: Error;
+  reactionCreateError?: Error;
+  reactionDeleteError?: Error;
 
   im = {
     message: {
@@ -44,6 +56,18 @@ export class FakeFeishuClient implements FeishuSdkClient {
       create: async (payload: Parameters<FeishuSdkClient["im"]["message"]["create"]>[0]): Promise<FeishuApiResponse<FeishuSentMessageData>> => {
         this.createPayloads.push(payload);
         return this.createResponse;
+      },
+    },
+    messageReaction: {
+      create: async (payload: Parameters<FeishuSdkClient["im"]["messageReaction"]["create"]>[0]): Promise<FeishuApiResponse<FeishuReactionData>> => {
+        this.reactionCreatePayloads.push(payload);
+        if (this.reactionCreateError) throw this.reactionCreateError;
+        return this.reactionCreateResponse;
+      },
+      delete: async (payload: Parameters<FeishuSdkClient["im"]["messageReaction"]["delete"]>[0]): Promise<FeishuApiResponse> => {
+        this.reactionDeletePayloads.push(payload);
+        if (this.reactionDeleteError) throw this.reactionDeleteError;
+        return this.reactionDeleteResponse;
       },
     },
   };

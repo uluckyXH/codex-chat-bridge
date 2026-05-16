@@ -46,6 +46,12 @@ test("Feishu private chat uses Bridge commands and default progress delivery", a
   assert.ok(texts.some((text) => text.includes("Codex 进度:") && text.includes("正在分析飞书私聊消息。")));
   assert.ok(texts.some((text) => text.includes("完成: 请处理这个任务")));
   assert.ok(texts.some((text) => text.includes("**Codex 状态**") && text.includes("- 渠道: `feishu`")));
+  assert.deepEqual(factory.client.reactionCreatePayloads.map((payload) => payload.path.message_id), ["om_prompt"]);
+  assert.equal(factory.client.reactionCreatePayloads[0].data.reaction_type.emoji_type, "Typing");
+  assert.deepEqual(factory.client.reactionDeletePayloads.map((payload) => payload.path), [{
+    message_id: "om_prompt",
+    reaction_id: "react_typing_1",
+  }]);
 });
 
 test("Feishu private chat honors /progress silent through the shared Bridge", async () => {

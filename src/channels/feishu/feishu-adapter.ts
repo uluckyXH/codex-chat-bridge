@@ -40,6 +40,7 @@ import type {
   FeishuEventHandlers,
   FeishuMessageReceiveEvent,
   FeishuProbeResult,
+  FeishuReactionData,
   FeishuSdkClient,
   FeishuSentMessageData,
   FeishuTransportFactory,
@@ -49,6 +50,7 @@ import type {
 
 const DEFAULT_SOURCE_VERSION = "node-sdk";
 const DEFAULT_DEDUP_TTL_MS = 10 * 60 * 1000;
+const FEISHU_TYPING_EMOJI_TYPE = "Typing";
 const SILENT_FEISHU_SDK_LOGGER = {
   fatal: () => undefined,
   error: () => undefined,
@@ -77,6 +79,7 @@ export class FeishuAdapter implements ChannelAdapter {
   private botOpenId?: string;
   private botName?: string;
   private readonly seenMessages = new Map<string, number>();
+  private readonly typingReactions = new Map<string, string>();
 
   constructor(options: FeishuAdapterOptions = {}) {
     this.id = options.id ?? FEISHU_CHANNEL_ID;
@@ -150,6 +153,7 @@ export class FeishuAdapter implements ChannelAdapter {
     this.wsClient?.close({ force: true });
     this.wsClient = undefined;
     this.dispatcher = undefined;
+    this.typingReactions.clear();
     this.status = {
       ...this.status,
       state: "stopped",
@@ -174,11 +178,13 @@ export class FeishuAdapter implements ChannelAdapter {
   async getStatus(): Promise<ChannelStatus> {
     const details = this.status.details;
     const lastSkipReason = stringDetail(details, "lastSkipReason");
+    const lastTypingError = stringDetail(details, "lastTypingError");
     return {
       ...this.status,
       details: {
         ...this.statusDetails(stringDetail(details, "phase") ?? "status"),
         ...(lastSkipReason ? { lastSkipReason } : {}),
+        ...(lastTypingError ? { lastTypingError } : {}),
       },
     };
   }
@@ -187,7 +193,7 @@ export class FeishuAdapter implements ChannelAdapter {
     return {
       text: true,
       media: false,
-      typing: false,
+      typing: true,
       direct: true,
       group: false,
       thread: false,
@@ -243,6 +249,16 @@ export class FeishuAdapter implements ChannelAdapter {
       throw new Error(errorText);
     }
     return this.recordSendResult(response, uuid);
+  }
+
+  async sendTyping(target: ChannelTarget, typing: boolean, options?: SendOptions): Promise<void> {
+    const messageId = options?.replyToMessageId ?? stringDetail(target.context, "sourceMessageId");
+    if (!messageId) return;
+    if (typing) {
+      await this.addTypingReaction(messageId);
+      return;
+    }
+    await this.removeTypingReaction(messageId);
   }
 
   private eventHandlers(): FeishuEventHandlers {
@@ -418,12 +434,66 @@ export class FeishuAdapter implements ChannelAdapter {
     };
   }
 
+  private async addTypingReaction(messageId: string): Promise<void> {
+    if (this.typingReactions.has(messageId)) return;
+    const client = this.ensureClient();
+    try {
+      const response: FeishuApiResponse<FeishuReactionData> = await client.im.messageReaction.create({
+        path: { message_id: messageId },
+        data: {
+          reaction_type: {
+            emoji_type: FEISHU_TYPING_EMOJI_TYPE,
+          },
+        },
+      });
+      if (response.code !== undefined && response.code !== 0) {
+        this.recordTypingError(new Error(formatFeishuApiError(response, "飞书 typing 表情添加失败")), "typing-add-failed");
+        return;
+      }
+      const reactionId = response.data?.reaction_id;
+      if (reactionId) this.typingReactions.set(messageId, reactionId);
+    } catch (error) {
+      this.recordTypingError(error, "typing-add-failed");
+    }
+  }
+
+  private async removeTypingReaction(messageId: string): Promise<void> {
+    const reactionId = this.typingReactions.get(messageId);
+    if (!reactionId) return;
+    const client = this.ensureClient();
+    try {
+      const response = await client.im.messageReaction.delete({
+        path: {
+          message_id: messageId,
+          reaction_id: reactionId,
+        },
+      });
+      if (response.code !== undefined && response.code !== 0) {
+        this.recordTypingError(new Error(formatFeishuApiError(response, "飞书 typing 表情移除失败")), "typing-remove-failed");
+        return;
+      }
+      this.typingReactions.delete(messageId);
+    } catch (error) {
+      this.recordTypingError(error, "typing-remove-failed");
+    }
+  }
+
   private recordSendError(error: unknown, phase: string): void {
     this.status = {
       ...this.status,
       state: this.status.state === "connected" ? "degraded" : this.status.state,
       lastError: error instanceof Error ? error.message : String(error),
       details: this.statusDetails(phase),
+    };
+  }
+
+  private recordTypingError(error: unknown, phase: string): void {
+    this.status = {
+      ...this.status,
+      details: {
+        ...this.statusDetails(phase),
+        lastTypingError: error instanceof Error ? error.message : String(error),
+      },
     };
   }
 
