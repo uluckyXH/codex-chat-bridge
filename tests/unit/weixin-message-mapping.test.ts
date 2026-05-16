@@ -45,6 +45,44 @@ test("weixinMessageToChannelMessage uses adapter instance channel id", () => {
   assert.equal(message.routeKey, "weixin-main:bot-1:direct:user@im.wechat");
 });
 
+test("weixinMessageToChannelMessage maps image and file items to attachments", () => {
+  const message = weixinMessageToChannelMessage("weixin", "bot-1", {
+    message_id: 126,
+    from_user_id: "user@im.wechat",
+    item_list: [
+      {
+        type: 2,
+        msg_id: "img-msg",
+        image_item: {
+          media: {
+            full_url: "https://cdn.example/image",
+          },
+          mid_size: 123,
+        },
+      },
+      {
+        type: 4,
+        msg_id: "file-msg",
+        file_item: {
+          media: {
+            full_url: "https://cdn.example/file",
+          },
+          file_name: "report.pdf",
+          len: "456",
+        },
+      },
+    ],
+  });
+
+  assert.equal(message.attachments?.length, 2);
+  assert.equal(message.attachments?.[0]?.type, "image");
+  assert.equal(message.attachments?.[0]?.id, "img-msg");
+  assert.equal(message.attachments?.[0]?.sizeBytes, 123);
+  assert.equal(message.attachments?.[1]?.type, "file");
+  assert.equal(message.attachments?.[1]?.name, "report.pdf");
+  assert.equal(message.attachments?.[1]?.sizeBytes, 456);
+});
+
 test("normalizeWeixinAccountId creates file-safe account ids", () => {
   assert.equal(normalizeWeixinAccountId("abc@im.bot"), "abc-im-bot");
   assert.equal(normalizeWeixinAccountId("abc@im.wechat"), "abc-im-wechat");

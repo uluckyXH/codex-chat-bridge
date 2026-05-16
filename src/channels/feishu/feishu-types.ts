@@ -1,4 +1,5 @@
 import type { ChannelMessage } from "../../protocol/channel.js";
+import type { Readable } from "node:stream";
 
 export interface FeishuCredentials {
   appId?: string;
@@ -18,6 +19,7 @@ export interface FeishuAdapterOptions extends FeishuCredentials {
   dedupTtlMs?: number;
   transportFactory?: FeishuTransportFactory;
   now?: () => number;
+  inboundMediaRootDir?: string;
 }
 
 export interface FeishuBotIdentity {
@@ -47,6 +49,20 @@ export interface FeishuReactionData {
   reaction_id?: string;
 }
 
+export interface FeishuImageUploadData {
+  image_key?: string;
+}
+
+export interface FeishuFileUploadData {
+  file_key?: string;
+}
+
+export interface FeishuResourceDownload {
+  writeFile?: (filePath: string) => Promise<unknown>;
+  getReadableStream: () => Readable;
+  headers?: unknown;
+}
+
 export interface FeishuSdkClient {
   im: {
     message: {
@@ -72,6 +88,35 @@ export interface FeishuSdkClient {
           receive_id_type: "open_id" | "user_id" | "union_id" | "email" | "chat_id";
         };
       }): Promise<FeishuApiResponse<FeishuSentMessageData>>;
+    };
+    image: {
+      create(payload: {
+        data: {
+          image_type: "message" | "avatar";
+          image: Buffer;
+        };
+      }): Promise<FeishuImageUploadData | FeishuApiResponse<FeishuImageUploadData> | null>;
+    };
+    file: {
+      create(payload: {
+        data: {
+          file_type: "opus" | "mp4" | "pdf" | "doc" | "xls" | "ppt" | "stream";
+          file_name: string;
+          duration?: number;
+          file: Buffer;
+        };
+      }): Promise<FeishuFileUploadData | FeishuApiResponse<FeishuFileUploadData> | null>;
+    };
+    messageResource: {
+      get(payload: {
+        params: {
+          type: string;
+        };
+        path: {
+          message_id: string;
+          file_key: string;
+        };
+      }): Promise<FeishuResourceDownload>;
     };
     messageReaction: {
       create(payload: {

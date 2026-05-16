@@ -6,6 +6,7 @@ import {
   loadFeishuCredentialsFromEnv,
   maskFeishuSecret,
   missingFeishuCredentials,
+  parseFeishuMessageContent,
   parseFeishuTextContent,
 } from "../../src/channels/feishu/feishu-message.js";
 import { sampleFeishuTextEvent } from "../helpers/feishu-fakes.js";
@@ -59,7 +60,7 @@ test("feishuEventToChannelMessage skips unsupported or unsafe events", () => {
   }), baseOptions), { ok: false, reason: "unsupported_chat_type" });
 
   assert.deepEqual(feishuEventToChannelMessage(sampleFeishuTextEvent({
-    message: { message_type: "image" },
+    message: { message_type: "audio" },
   }), baseOptions), { ok: false, reason: "unsupported_message_type" });
 
   assert.deepEqual(feishuEventToChannelMessage(sampleFeishuTextEvent({
@@ -69,6 +70,58 @@ test("feishuEventToChannelMessage skips unsupported or unsafe events", () => {
   assert.deepEqual(feishuEventToChannelMessage(sampleFeishuTextEvent({
     sender: { sender_id: { open_id: "ou_bot" } },
   }), { ...baseOptions, botOpenId: "ou_bot" }), { ok: false, reason: "self_echo" });
+});
+
+test("feishuEventToChannelMessage maps image and file messages to attachments", () => {
+  const imageResult = feishuEventToChannelMessage(sampleFeishuTextEvent({
+    message: {
+      message_id: "om_image",
+      message_type: "image",
+      content: JSON.stringify({ image_key: "img_v3_1" }),
+    },
+  }), {
+    channelId: "feishu",
+    accountId: "default",
+    now: Date.now(),
+  });
+  assert.equal(imageResult.ok, true);
+  if (imageResult.ok) {
+    assert.equal(imageResult.message.text, undefined);
+    assert.equal(imageResult.message.attachments?.[0]?.type, "image");
+    assert.equal(imageResult.message.attachments?.[0]?.id, "img_v3_1");
+  }
+
+  const fileResult = feishuEventToChannelMessage(sampleFeishuTextEvent({
+    message: {
+      message_id: "om_file",
+      message_type: "file",
+      content: JSON.stringify({ file_key: "file_v3_1", file_name: "report.pdf", file_size: 12 }),
+    },
+  }), {
+    channelId: "feishu",
+    accountId: "default",
+    now: Date.now(),
+  });
+  assert.equal(fileResult.ok, true);
+  if (fileResult.ok) {
+    assert.equal(fileResult.message.attachments?.[0]?.type, "file");
+    assert.equal(fileResult.message.attachments?.[0]?.name, "report.pdf");
+    assert.equal(fileResult.message.attachments?.[0]?.sizeBytes, 12);
+  }
+});
+
+test("parseFeishuMessageContent extracts post text and images", () => {
+  const parsed = parseFeishuMessageContent("post", JSON.stringify({
+    content: [[
+      { tag: "text", text: "看下这张图" },
+      { tag: "img", image_key: "img_post_1" },
+    ]],
+  }));
+
+  assert.equal(parsed.text, "看下这张图");
+  assert.equal(parsed.attachments.length, 1);
+  assert.equal(parsed.attachments[0].type, "image");
+  assert.equal(parsed.attachments[0].id, "img_post_1");
 });
 
 test("feishuEventToChannelMessage skips stale replayed messages", () => {

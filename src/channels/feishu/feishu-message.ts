@@ -1,4 +1,5 @@
-import { buildRouteKey, type ChannelMessage } from "../../protocol/channel.js";
+import { buildRouteKey, type ChannelAttachment, type ChannelMessage } from "../../protocol/channel.js";
+import type { FeishuInboundAttachmentRaw } from "./feishu-media.js";
 import type {
   FeishuCredentials,
   FeishuMessageMappingOptions,
@@ -65,6 +66,51 @@ export function parseFeishuTextContent(content: string): string | undefined {
   }
 }
 
+export interface ParsedFeishuMessageContent {
+  text?: string;
+  attachments: ChannelAttachment[];
+}
+
+export function parseFeishuMessageContent(messageType: string, content: string): ParsedFeishuMessageContent {
+  if (messageType === "text") {
+    return {
+      text: parseFeishuTextContent(content),
+      attachments: [],
+    };
+  }
+  const parsed = parseFeishuContentJson(content);
+  if (messageType === "image") {
+    const imageKey = stringField(parsed, "image_key");
+    return {
+      attachments: imageKey ? [feishuAttachment({
+        id: imageKey,
+        type: "image",
+        fileKey: imageKey,
+        resourceType: "image",
+        rawContent: parsed,
+      })] : [],
+    };
+  }
+  if (messageType === "file") {
+    const fileKey = stringField(parsed, "file_key");
+    return {
+      attachments: fileKey ? [feishuAttachment({
+        id: fileKey,
+        type: "file",
+        fileKey,
+        resourceType: "file",
+        name: firstStringField(parsed, "file_name", "name"),
+        sizeBytes: numberField(parsed, "file_size") ?? numberField(parsed, "size"),
+        rawContent: parsed,
+      })] : [],
+    };
+  }
+  if (messageType === "post") {
+    return parseFeishuPostContent(parsed);
+  }
+  return { attachments: [] };
+}
+
 export function feishuEventToChannelMessage(
   event: FeishuMessageReceiveEvent,
   options: FeishuMessageMappingOptions,
@@ -79,7 +125,7 @@ export function feishuEventToChannelMessage(
   if (message.chat_type !== "p2p") {
     return { ok: false, reason: "unsupported_chat_type" };
   }
-  if (message.message_type !== "text") {
+  if (!isSupportedFeishuMessageType(message.message_type)) {
     return { ok: false, reason: "unsupported_message_type" };
   }
   const senderType = event.sender?.sender_type;
@@ -96,8 +142,10 @@ export function feishuEventToChannelMessage(
   if (isStaleFeishuMessage(message.create_time, options.now, options.staleMessageMs)) {
     return { ok: false, reason: "stale_message" };
   }
-  const text = parseFeishuTextContent(message.content);
-  if (!text) return { ok: false, reason: "empty_text" };
+  const parsedContent = parseFeishuMessageContent(message.message_type, message.content);
+  if (!parsedContent.text && parsedContent.attachments.length === 0) {
+    return { ok: false, reason: "empty_message" };
+  }
   const routeKey = buildRouteKey({
     channelId: options.channelId,
     accountId: options.accountId,
@@ -116,11 +164,119 @@ export function feishuEventToChannelMessage(
       kind: "direct",
       displayName: "飞书私聊",
     },
-    text,
+    text: parsedContent.text,
+    attachments: parsedContent.attachments.length > 0 ? parsedContent.attachments : undefined,
     timestamp,
     raw: event,
   };
   return { ok: true, message: channelMessage };
+}
+
+function isSupportedFeishuMessageType(messageType: string): boolean {
+  return messageType === "text" || messageType === "image" || messageType === "file" || messageType === "post";
+}
+
+function parseFeishuContentJson(content: string): unknown {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseFeishuPostContent(parsed: unknown): ParsedFeishuMessageContent {
+  const attachments: ChannelAttachment[] = [];
+  const textParts: string[] = [];
+  const content = objectField(parsed, "content");
+  if (Array.isArray(content)) {
+    for (const line of content) {
+      if (!Array.isArray(line)) continue;
+      for (const item of line) {
+        const tag = stringField(item, "tag");
+        const text = firstStringField(item, "text", "name");
+        if (text && (tag === "text" || tag === "a" || tag === "at")) {
+          textParts.push(text);
+        }
+        const imageKey = stringField(item, "image_key");
+        if (imageKey) {
+          attachments.push(feishuAttachment({
+            id: imageKey,
+            type: "image",
+            fileKey: imageKey,
+            resourceType: "image",
+            rawContent: item,
+          }));
+        }
+        const fileKey = stringField(item, "file_key");
+        if (fileKey) {
+          attachments.push(feishuAttachment({
+            id: fileKey,
+            type: "file",
+            fileKey,
+            resourceType: "file",
+            name: firstStringField(item, "file_name", "name"),
+            sizeBytes: numberField(item, "file_size") ?? numberField(item, "size"),
+            rawContent: item,
+          }));
+        }
+      }
+    }
+  }
+  const text = textParts.join("").trim() || undefined;
+  return { text, attachments };
+}
+
+function feishuAttachment(params: {
+  id: string;
+  type: "image" | "file";
+  fileKey: string;
+  resourceType: "image" | "file";
+  name?: string;
+  sizeBytes?: number;
+  rawContent: unknown;
+}): ChannelAttachment {
+  return {
+    id: params.id,
+    type: params.type,
+    name: params.name,
+    sizeBytes: params.sizeBytes,
+    raw: {
+      source: "feishu",
+      fileKey: params.fileKey,
+      resourceType: params.resourceType,
+      content: params.rawContent,
+    } satisfies FeishuInboundAttachmentRaw & { content: unknown },
+  };
+}
+
+function objectField(value: unknown, key: string): unknown {
+  if (!value || typeof value !== "object") return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  const field = objectField(value, key);
+  return typeof field === "string" && field.trim() ? field : undefined;
+}
+
+function firstStringField(value: unknown, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const field = stringField(value, key);
+    if (field) return field;
+  }
+  return undefined;
+}
+
+function numberField(value: unknown, key: string): number | undefined {
+  const field = objectField(value, key);
+  if (typeof field === "number" && Number.isFinite(field) && field >= 0) return field;
+  if (typeof field === "string" && field.trim()) {
+    const parsed = Number.parseInt(field, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return undefined;
 }
 
 export function buildFeishuPostContent(text: string): string {

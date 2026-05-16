@@ -48,7 +48,7 @@ Chat-Codex 是一个轻量的聊天渠道中间件，用来把微信和飞书里
 ## 能力概览
 
 - 统一 `chat-codex` 入口，使用 TUI 管理渠道、聊天绑定、权限和启动流程。
-- 支持微信账号和飞书机器人接入。
+- 支持微信账号和飞书机器人接入，私聊文本/图片/文件收发。
 - 支持每个聊天 route 独立绑定一个 Codex session。
 - 支持一个 Codex session 只归属一个 route，避免审批、文件和上下文串线。
 - 支持 Codex app-server 作为默认接入方式，并保留 `codex exec --json` 回退适配。
@@ -199,7 +199,7 @@ Bridge 只解析 Codex 最终回复末尾的内部协议行：
 BRIDGE_SEND_FILE: /absolute/path/to/file
 ```
 
-每轮最多发送 3 个文件。协议行不会展示给聊天用户。
+每轮最多发送 3 个文件。协议行不会展示给聊天用户。微信和飞书当前都支持图片/文件发送。
 
 ## 文档
 
@@ -207,6 +207,7 @@ BRIDGE_SEND_FILE: /absolute/path/to/file
 - [docs/requirements.zh-CN.md](docs/requirements.zh-CN.md)：需求、边界和命令要求。
 - [docs/technical-design.zh-CN.md](docs/technical-design.zh-CN.md)：技术设计和架构说明。
 - [docs/channel-delivery-policy.zh-CN.md](docs/channel-delivery-policy.zh-CN.md)：渠道投递策略。
+- [docs/inbound-media-design.zh-CN.md](docs/inbound-media-design.zh-CN.md)：入站图片和文件、pending media、结构化 Codex 输入。
 - [docs/multi-channel-design.zh-CN.md](docs/multi-channel-design.zh-CN.md)：多渠道 route/session 绑定和并发设计。
 - [docs/local-state-persistence.zh-CN.md](docs/local-state-persistence.zh-CN.md)：本地文件持久化和 session owner 约束。
 - [docs/ink-tui-interaction-design.zh-CN.md](docs/ink-tui-interaction-design.zh-CN.md)：TUI 交互设计。

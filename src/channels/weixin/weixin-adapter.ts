@@ -1,5 +1,6 @@
 import type {
   ChannelAdapter,
+  ChannelAttachment,
   ChannelCapabilities,
   ChannelLoginResult,
   ChannelMedia,
@@ -11,6 +12,7 @@ import type {
   SendResult,
 } from "../../protocol/channel.js";
 import type { ChannelDeliveryPolicy } from "../../protocol/delivery-policy.js";
+import { saveInboundMedia } from "../../bridge/inbound-media-store.js";
 import { buildRouteKey } from "../../protocol/channel.js";
 import { FileWeixinAccountStore, normalizeWeixinAccountId, type StoredWeixinAccount, type WeixinAccountStore } from "./weixin-account-store.js";
 import { WeixinApiClient, type WeixinApiClientOptions } from "./weixin-api.js";
@@ -27,6 +29,7 @@ import {
   DEFAULT_WEIXIN_CDN_BASE_URL,
   buildWeixinFileItem,
   buildWeixinImageItem,
+  downloadWeixinCdnMedia,
   materializeChannelMedia,
   mediaTypeForPath,
   uploadLocalMediaToWeixin,
@@ -53,6 +56,7 @@ export interface WeixinAdapterOptions {
   outboundRetryBaseDelayMs?: number;
   outboundRequestTimeoutMs?: number;
   mediaRequestTimeoutMs?: number;
+  inboundMediaRootDir?: string;
 }
 
 export interface WeixinLoginStartResult extends ChannelLoginResult {
@@ -118,6 +122,7 @@ export class WeixinAdapter implements ChannelAdapter {
   private readonly outboundRetryBaseDelayMs: number;
   private readonly outboundRequestTimeoutMs: number;
   private readonly mediaRequestTimeoutMs: number;
+  private readonly inboundMediaRootDir?: string;
   private handler?: ChannelMessageHandler;
   private status: ChannelStatus;
   private activeLogin?: ActiveLogin;
@@ -150,6 +155,7 @@ export class WeixinAdapter implements ChannelAdapter {
     this.outboundRetryBaseDelayMs = options.outboundRetryBaseDelayMs ?? DEFAULT_OUTBOUND_RETRY_BASE_DELAY_MS;
     this.outboundRequestTimeoutMs = options.outboundRequestTimeoutMs ?? DEFAULT_OUTBOUND_REQUEST_TIMEOUT_MS;
     this.mediaRequestTimeoutMs = options.mediaRequestTimeoutMs ?? DEFAULT_MEDIA_REQUEST_TIMEOUT_MS;
+    this.inboundMediaRootDir = options.inboundMediaRootDir;
     this.status = {
       channelId: this.id,
       state: "login_required",
@@ -254,6 +260,7 @@ export class WeixinAdapter implements ChannelAdapter {
     return {
       text: true,
       media: true,
+      receiveMedia: true,
       typing: true,
       direct: true,
       group: false,
@@ -479,7 +486,7 @@ export class WeixinAdapter implements ChannelAdapter {
           this.store.saveGetUpdatesBuf(account.accountId, getUpdatesBuf);
         }
         for (const raw of response.msgs ?? []) {
-          await this.handleInbound(account.accountId, raw);
+          await this.handleInbound(account, raw);
         }
       } catch (error) {
         if (signal.aborted) return;
@@ -490,13 +497,14 @@ export class WeixinAdapter implements ChannelAdapter {
     }
   }
 
-  private async handleInbound(accountId: string, raw: WeixinMessage): Promise<void> {
+  private async handleInbound(account: StoredWeixinAccount, raw: WeixinMessage): Promise<void> {
     if (!this.handler) return;
-    const message = weixinMessageToChannelMessage(this.id, accountId, raw);
+    const message = weixinMessageToChannelMessage(this.id, account.accountId, raw);
+    await this.downloadInboundAttachments(message, account);
     this.status = {
       ...this.status,
       state: "connected",
-      account: accountId,
+      account: account.accountId,
       lastInboundAt: message.timestamp,
       lastError: undefined,
     };
@@ -668,6 +676,64 @@ export class WeixinAdapter implements ChannelAdapter {
       mediaRequestTimeoutMs: this.mediaRequestTimeoutMs,
     };
   }
+
+  private async downloadInboundAttachments(message: ChannelMessage, account: StoredWeixinAccount): Promise<void> {
+    if (!message.attachments || message.attachments.length === 0) return;
+    const nextAttachments: ChannelAttachment[] = [];
+    for (const attachment of message.attachments) {
+      nextAttachments.push(await this.downloadInboundAttachment(message, attachment, account));
+    }
+    message.attachments = nextAttachments;
+  }
+
+  private async downloadInboundAttachment(
+    message: ChannelMessage,
+    attachment: ChannelAttachment,
+    account: StoredWeixinAccount,
+  ): Promise<ChannelAttachment> {
+    const raw = attachment.raw && typeof attachment.raw === "object" ? attachment.raw as WeixinInboundAttachmentRaw : undefined;
+    if (!raw?.media && !raw?.fallbackUrl) {
+      return {
+        ...attachment,
+        downloadState: "unsupported",
+        error: "weixin media missing download metadata",
+      };
+    }
+    try {
+      const downloaded = await downloadWeixinCdnMedia({
+        api: this.api,
+        media: raw.media,
+        aesKey: raw.aesKey,
+        fallbackUrl: raw.fallbackUrl,
+        cdnBaseUrl: account.cdnBaseUrl ?? this.cdnBaseUrl,
+        timeoutMs: this.mediaRequestTimeoutMs,
+      });
+      const saved = await saveInboundMedia({
+        message,
+        attachment: {
+          ...attachment,
+          mimeType: attachment.mimeType ?? downloaded.contentType,
+        },
+        data: downloaded.body,
+        rootDir: this.inboundMediaRootDir,
+      });
+      return {
+        ...attachment,
+        mimeType: saved.mimeType ?? attachment.mimeType ?? downloaded.contentType,
+        sizeBytes: attachment.sizeBytes ?? saved.sizeBytes,
+        localPath: saved.localPath,
+        url: downloaded.url,
+        downloadState: "available",
+        error: undefined,
+      };
+    } catch (error) {
+      return {
+        ...attachment,
+        downloadState: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 }
 
 function isRetryableSendMessageError(error: unknown): boolean {
@@ -720,6 +786,7 @@ export function weixinMessageToChannelMessage(channelId: string, accountId: stri
     sender: { id: senderId },
     conversation: { id: conversationId, kind: conversationKind },
     text: textFromWeixinMessage(raw),
+    attachments: attachmentsFromWeixinMessage(raw),
     timestamp: new Date(raw.create_time_ms ?? Date.now()).toISOString(),
     raw,
   };
@@ -735,6 +802,57 @@ function textFromWeixinMessage(raw: WeixinMessage): string | undefined {
     }
   }
   return undefined;
+}
+
+interface WeixinInboundAttachmentRaw {
+  media?: NonNullable<WeixinMessageItem["image_item"]>["media"] | NonNullable<WeixinMessageItem["file_item"]>["media"];
+  aesKey?: string;
+  fallbackUrl?: string;
+}
+
+function attachmentsFromWeixinMessage(raw: WeixinMessage): ChannelAttachment[] | undefined {
+  const attachments: ChannelAttachment[] = [];
+  for (const [index, item] of (raw.item_list ?? []).entries()) {
+    if (item.type === WeixinMessageItemType.IMAGE && item.image_item) {
+      const attachmentId = String(item.msg_id ?? `image-${index}`);
+      attachments.push({
+        id: attachmentId,
+        type: "image",
+        name: `weixin-image-${attachmentId}`,
+        sizeBytes: firstPositiveNumber(item.image_item.hd_size, item.image_item.mid_size, item.image_item.thumb_size),
+        url: item.image_item.media?.full_url ?? item.image_item.url,
+        raw: {
+          media: item.image_item.media,
+          aesKey: item.image_item.aeskey ? Buffer.from(item.image_item.aeskey, "hex").toString("base64") : item.image_item.media?.aes_key,
+          fallbackUrl: item.image_item.url,
+        } satisfies WeixinInboundAttachmentRaw,
+      });
+    } else if (item.type === WeixinMessageItemType.FILE && item.file_item) {
+      const attachmentId = String(item.msg_id ?? item.file_item.file_name ?? `file-${index}`);
+      attachments.push({
+        id: attachmentId,
+        type: "file",
+        name: item.file_item.file_name ?? `weixin-file-${attachmentId}`,
+        sizeBytes: parseOptionalInteger(item.file_item.len),
+        url: item.file_item.media?.full_url,
+        raw: {
+          media: item.file_item.media,
+          aesKey: item.file_item.media?.aes_key,
+        } satisfies WeixinInboundAttachmentRaw,
+      });
+    }
+  }
+  return attachments.length > 0 ? attachments : undefined;
+}
+
+function firstPositiveNumber(...values: Array<number | undefined>): number | undefined {
+  return values.find((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+}
+
+function parseOptionalInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function sleep(ms: number): Promise<void> {

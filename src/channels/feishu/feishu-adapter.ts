@@ -10,6 +10,7 @@ import type {
   ChannelAdapter,
   ChannelCapabilities,
   ChannelLoginResult,
+  ChannelMedia,
   ChannelMessageHandler,
   ChannelStatus,
   ChannelTarget,
@@ -31,6 +32,12 @@ import {
   missingFeishuCredentials,
   normalizeFeishuCredentials,
 } from "./feishu-message.js";
+import {
+  downloadFeishuInboundAttachments,
+  feishuFileTypeForName,
+  feishuUploadKey,
+  materializeFeishuChannelMedia,
+} from "./feishu-media.js";
 import type {
   FeishuAdapterOptions,
   FeishuApiResponse,
@@ -71,6 +78,7 @@ export class FeishuAdapter implements ChannelAdapter {
   private readonly dedupTtlMs: number;
   private readonly transportFactory: FeishuTransportFactory;
   private readonly now: () => number;
+  private readonly inboundMediaRootDir?: string;
   private handler?: ChannelMessageHandler;
   private status: ChannelStatus;
   private client?: FeishuSdkClient;
@@ -91,6 +99,7 @@ export class FeishuAdapter implements ChannelAdapter {
     this.dedupTtlMs = options.dedupTtlMs ?? DEFAULT_DEDUP_TTL_MS;
     this.transportFactory = options.transportFactory ?? new DefaultFeishuTransportFactory();
     this.now = options.now ?? Date.now;
+    this.inboundMediaRootDir = options.inboundMediaRootDir;
     this.status = {
       channelId: this.id,
       state: missingFeishuCredentials(this.credentials).length > 0 ? "login_required" : "stopped",
@@ -192,7 +201,8 @@ export class FeishuAdapter implements ChannelAdapter {
   getCapabilities(): ChannelCapabilities {
     return {
       text: true,
-      media: false,
+      media: true,
+      receiveMedia: true,
       typing: true,
       direct: true,
       group: false,
@@ -212,8 +222,53 @@ export class FeishuAdapter implements ChannelAdapter {
   }
 
   async sendText(target: ChannelTarget, text: string, options?: SendOptions): Promise<SendResult> {
+    return this.sendFeishuMessage(target, "post", buildFeishuPostContent(text), options);
+  }
+
+  async sendMedia(target: ChannelTarget, media: ChannelMedia, options?: SendOptions): Promise<SendResult> {
+    if (media.type !== "image" && media.type !== "file") {
+      throw new Error(`FeishuAdapter 当前只支持图片和文件媒体发送: ${media.type}`);
+    }
     const client = this.ensureClient();
-    const content = buildFeishuPostContent(text);
+    try {
+      const materialized = await materializeFeishuChannelMedia(media);
+      if (media.caption?.trim()) {
+        await this.sendText(target, media.caption.trim(), options);
+      }
+      if (media.type === "image") {
+        const upload = await client.im.image.create({
+          data: {
+            image_type: "message",
+            image: materialized.buffer,
+          },
+        });
+        const imageKey = feishuUploadKey(upload, "image_key");
+        if (!imageKey) throw new Error("飞书图片上传响应缺少 image_key");
+        return this.sendFeishuMessage(target, "image", JSON.stringify({ image_key: imageKey }), options);
+      }
+      const upload = await client.im.file.create({
+        data: {
+          file_type: feishuFileTypeForName(materialized.fileName, materialized.mimeType),
+          file_name: materialized.fileName,
+          file: materialized.buffer,
+        },
+      });
+      const fileKey = feishuUploadKey(upload, "file_key");
+      if (!fileKey) throw new Error("飞书文件上传响应缺少 file_key");
+      return this.sendFeishuMessage(target, "file", JSON.stringify({ file_key: fileKey }), options);
+    } catch (error) {
+      this.recordSendError(error, "media-send-failed");
+      throw error;
+    }
+  }
+
+  private async sendFeishuMessage(
+    target: ChannelTarget,
+    msgType: string,
+    content: string,
+    options?: SendOptions,
+  ): Promise<SendResult> {
+    const client = this.ensureClient();
     const uuid = buildFeishuMessageUuid();
     const sourceMessageId = options?.replyToMessageId ?? stringDetail(target.context, "sourceMessageId");
     let response: FeishuApiResponse<FeishuSentMessageData> | undefined;
@@ -223,7 +278,7 @@ export class FeishuAdapter implements ChannelAdapter {
           path: { message_id: sourceMessageId },
           data: {
             content,
-            msg_type: "post",
+            msg_type: msgType,
             uuid,
           },
         });
@@ -238,7 +293,7 @@ export class FeishuAdapter implements ChannelAdapter {
       params: { receive_id_type: "chat_id" },
       data: {
         receive_id: target.conversation.id,
-        msg_type: "post",
+        msg_type: msgType,
         content,
         uuid,
       },
@@ -296,6 +351,11 @@ export class FeishuAdapter implements ChannelAdapter {
       };
       return;
     }
+    await downloadFeishuInboundAttachments({
+      client: this.ensureClient(),
+      message: mapped.message,
+      rootDir: this.inboundMediaRootDir,
+    });
     this.status = {
       ...this.status,
       lastInboundAt: mapped.message.timestamp,

@@ -500,6 +500,150 @@ test("WeixinAdapter uploads and sends file attachments", async () => {
   assert.equal(fileItem.file_item.media.encrypt_query_param, "download-file-param");
 });
 
+test("WeixinAdapter downloads inbound image and file attachments before emitting ChannelMessage", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-1",
+    baseUrl: "https://api.example",
+    cdnBaseUrl: "https://cdn.example/c2c",
+    savedAt: new Date().toISOString(),
+  });
+  const uploadRoot = tempStateDir();
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+  const fileBytes = Buffer.from("report");
+  let updateCalls = 0;
+  const fetchImpl: FetchLike = async (input) => {
+    const url = String(input);
+    if (url.includes("notifystart") || url.includes("notifystop")) return jsonResponse({});
+    if (url.includes("getupdates")) {
+      updateCalls += 1;
+      if (updateCalls === 1) {
+        return jsonResponse({
+          msgs: [{
+            message_id: 2001,
+            from_user_id: "user@im.wechat",
+            create_time_ms: 1_700_000_000_000,
+            item_list: [{
+              type: 2,
+              msg_id: "img-in-1",
+              image_item: {
+                media: { full_url: "https://cdn.example/image.png" },
+              },
+            }, {
+              type: 4,
+              msg_id: "file-in-1",
+              file_item: {
+                media: { full_url: "https://cdn.example/report.pdf" },
+                file_name: "report.pdf",
+                len: String(fileBytes.length),
+              },
+            }],
+          }],
+        });
+      }
+      return jsonResponse({ ret: -14, errcode: -14, errmsg: "stop polling" });
+    }
+    if (url === "https://cdn.example/image.png") {
+      return new Response(new Uint8Array(imageBytes), {
+        status: 200,
+        headers: { "Content-Type": "image/png" },
+      });
+    }
+    if (url === "https://cdn.example/report.pdf") {
+      return new Response(new Uint8Array(fileBytes), {
+        status: 200,
+        headers: { "Content-Type": "application/pdf" },
+      });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    longPollTimeoutMs: 1,
+    inboundMediaRootDir: uploadRoot,
+    apiOptions: { fetch: fetchImpl },
+  });
+  const received: Array<Array<{ type?: string; localPath?: string; downloadState?: string }>> = [];
+  adapter.onMessage(async (message) => {
+    received.push((message.attachments ?? []).map((attachment) => ({
+      type: attachment.type,
+      localPath: attachment.localPath,
+      downloadState: attachment.downloadState,
+    })));
+  });
+
+  await adapter.start();
+  await waitFor(async () => received.length === 1);
+  await adapter.stop();
+
+  assert.equal(received[0].length, 2);
+  assert.deepEqual(received[0].map((attachment) => attachment.downloadState), ["available", "available"]);
+  assert.deepEqual(received[0].map((attachment) => attachment.type), ["image", "file"]);
+  assert.ok(received[0][0].localPath?.startsWith(uploadRoot));
+  assert.ok(received[0][1].localPath?.startsWith(uploadRoot));
+  assert.deepEqual(fs.readFileSync(received[0][0].localPath ?? ""), imageBytes);
+  assert.deepEqual(fs.readFileSync(received[0][1].localPath ?? ""), fileBytes);
+});
+
+test("WeixinAdapter marks inbound image download failures", async () => {
+  const store = new FileWeixinAccountStore(tempStateDir());
+  store.saveAccount({
+    accountId: "abc-im-bot",
+    token: "token-1",
+    baseUrl: "https://api.example",
+    savedAt: new Date().toISOString(),
+  });
+  let updateCalls = 0;
+  const fetchImpl: FetchLike = async (input) => {
+    const url = String(input);
+    if (url.includes("notifystart") || url.includes("notifystop")) return jsonResponse({});
+    if (url.includes("getupdates")) {
+      updateCalls += 1;
+      if (updateCalls === 1) {
+        return jsonResponse({
+          msgs: [{
+            message_id: 2002,
+            from_user_id: "user@im.wechat",
+            item_list: [{
+              type: 2,
+              image_item: {
+                media: { full_url: "https://cdn.example/missing.png" },
+              },
+            }],
+          }],
+        });
+      }
+      return jsonResponse({ ret: -14, errcode: -14, errmsg: "stop polling" });
+    }
+    if (url === "https://cdn.example/missing.png") {
+      return new Response("missing", { status: 404 });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  const adapter = new WeixinAdapter({
+    baseUrl: "https://api.example",
+    store,
+    longPollTimeoutMs: 1,
+    inboundMediaRootDir: tempStateDir(),
+    apiOptions: { fetch: fetchImpl },
+  });
+  let downloadState = "";
+  let error = "";
+  adapter.onMessage(async (message) => {
+    downloadState = message.attachments?.[0]?.downloadState ?? "";
+    error = message.attachments?.[0]?.error ?? "";
+  });
+
+  await adapter.start();
+  await waitFor(async () => downloadState.length > 0);
+  await adapter.stop();
+
+  assert.equal(downloadState, "failed");
+  assert.match(error, /fetch binary 404/);
+});
+
 test("WeixinAdapter submits verify code when QR login requires pairing code", async () => {
   const store = new FileWeixinAccountStore(tempStateDir());
   const statusUrls: string[] = [];

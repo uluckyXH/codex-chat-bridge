@@ -186,7 +186,7 @@ export function inboundMediaSaveFailedText(): string {
 export function inboundMediaUnsupportedText(): string {
   return [
     "【Chat-Codex中间件提醒】",
-    "已收到附件，但当前只支持把已保存到本地的图片交给 Codex 处理。文件处理能力会在后续版本补齐。",
+    "已收到附件，但当前只能处理已成功保存到本地的图片或文件。请稍后重发，或换成图片/文件重新发送。",
   ].join("\n");
 }
 

@@ -8,7 +8,7 @@
 
 - 支持一个飞书自建应用机器人账号。
 - 通过飞书长连接 WebSocket 接收事件。
-- 先支持私聊文本消息。
+- 支持私聊文本、图片和文件消息。
 - 复用现有 Bridge 的 route/session 绑定、`/new`、`/resume`、`/use`、`/status`、审批和队列能力。
 - 飞书默认投递 Codex 进度信息，和微信默认抑制进度不同。
 
@@ -151,6 +151,7 @@ src/channels/feishu/
 
 ```text
 src/channels/feishu/feishu-adapter.ts
+src/channels/feishu/feishu-media.ts
 src/channels/feishu/feishu-message.ts
 src/channels/feishu/feishu-types.ts
 src/cli/feishu.ts
@@ -158,13 +159,14 @@ src/cli/feishu.ts
 
 ### 能力声明
 
-第一阶段：
+当前第一阶段：
 
 ```ts
 getCapabilities() {
   return {
     text: true,
-    media: false,
+    media: true,
+    receiveMedia: true,
     typing: true,
     direct: true,
     group: false,
@@ -178,7 +180,8 @@ getCapabilities() {
 
 说明：
 
-- 飞书官方能力支持群聊、thread、媒体、反应和卡片，但第一阶段 adapter 只声明实际已实现能力。
+- 飞书官方能力支持群聊、thread、媒体、反应和卡片，但 adapter 只声明实际已实现能力。
+- `media=true` 表示已实现出站图片/文件发送；`receiveMedia=true` 表示已实现入站图片/文件接收、下载和本地保存。
 - `typing` 用官方插件同款 reaction 方案实现：处理期间给入站消息添加 `Typing` 表情，完成后移除。
 - `messageUpdate` 第一阶段不做；进度先以普通文本投递。
 - `streamingHint` 可以为 true，表示该渠道适合接收进度/阶段性输出；实际是否发送由 `ChannelDeliveryPolicy` 和 `/progress` 控制。
@@ -247,6 +250,7 @@ Bridge 当前默认进度模式是 `brief`，只投递 reasoning、todo、search
 ```text
 im.message.receive_v1
 message.chat_type === "p2p"
+message.message_type === "text" | "image" | "file" | "post"
 sender.sender_type !== "bot" && sender.sender_type !== "app"
 sender.open_id !== botOpenId
 ```
@@ -254,6 +258,7 @@ sender.open_id !== botOpenId
 暂时跳过：
 
 - `chat_type === "group"`
+- `audio`、`video`、`sticker` 等尚未映射到通用附件的媒体类型
 - 用户 reaction 事件
 - card action 事件
 - bot 加群/退群事件
@@ -295,7 +300,12 @@ event.sender.sender_type
 event.message.create_time
 ```
 
-第一阶段只处理 `message_type === "text"`。
+当前支持：
+
+- `message_type === "text"`：解析 `content.text` 为普通文本。
+- `message_type === "image"`：解析 `image_key` 为图片附件，并通过 `im.messageResource.get` 下载保存。
+- `message_type === "file"`：解析 `file_key`、`file_name`、`file_size` 为文件附件，并通过 `im.messageResource.get` 下载保存。
+- `message_type === "post"`：从富文本 content 中提取文本段和 `image_key` / `file_key` 附件。
 
 飞书 text content 通常是 JSON 字符串：
 
@@ -371,6 +381,15 @@ event.message.create_time
   raw: response
 }
 ```
+
+## 出站图片和文件
+
+飞书 adapter 已实现 `sendMedia()`：
+
+- 图片：读取本地文件或 URL 为 `Buffer`，调用 `client.im.image.create({ image_type: "message" })` 上传，拿到 `image_key` 后发送 `msg_type: "image"`。
+- 文件：读取本地文件或 URL 为 `Buffer`，按扩展名映射 `pdf` / `doc` / `xls` / `ppt` / `mp4` / `opus`，其它类型使用 `stream`，调用 `client.im.file.create` 上传，拿到 `file_key` 后发送 `msg_type: "file"`。
+- 如果 `ChannelMedia.caption` 存在，先发送一条 `post` 文本说明，再发送媒体消息。
+- 发送仍优先 `reply` 原消息，失败后回退 `message.create` 到当前 `chat_id`。
 
 ## 输入状态 / 处理中表情
 
@@ -484,12 +503,16 @@ Codex Chat Bridge
 
 - `parseFeishuTextContent` 能解析 text content。
 - `feishuEventToChannelMessage` 能把 p2p text 事件映射为 `ChannelMessage`。
+- `feishuEventToChannelMessage` 能把 p2p image/file 事件映射为 attachment。
+- `parseFeishuMessageContent` 能从 post 富文本中提取文本和图片。
 - 非 p2p 消息被跳过。
 - bot/self echo 被跳过。
 - `routeKey` 使用 `chat_id`。
-- `getCapabilities()` 第一阶段只声明 direct/text。
+- `getCapabilities()` 声明 direct/text/media/receiveMedia。
 - `getDeliveryPolicy()` 返回默认投递策略。
 - `sendText()` 优先 reply，失败后 fallback create。
+- `sendMedia()` 能上传并发送图片和文件。
+- 入站图片/文件资源能通过 `messageResource.get` 下载保存到本地。
 - 缺少 credentials 时状态是 `login_required`。
 
 集成测试：
@@ -510,13 +533,16 @@ Codex Chat Bridge
 5. 设置环境变量。
 6. 运行 `npm run chat-codex`，添加飞书机器人并启动服务。
 7. 给机器人发私聊文本。
-8. 确认飞书里能看到：
+8. 给机器人发私聊图片和文件。
+9. 确认飞书里能看到：
    - task-start
    - Codex 进度
    - 最终回复
    - `/status`
    - `/new`
    - `/resume` 编号选择
+   - 图片-only 的中间件提醒
+   - 图片/文件加说明后进入 Codex
 
 ## 风险
 

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ChannelMedia } from "../../protocol/channel.js";
-import { WeixinMessageItemType, WeixinUploadMediaType, type WeixinMessageItem } from "./weixin-types.js";
+import { WeixinMessageItemType, WeixinUploadMediaType, type WeixinCdnMedia, type WeixinMessageItem } from "./weixin-types.js";
 import type { WeixinApiClient } from "./weixin-api.js";
 
 export const DEFAULT_WEIXIN_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
@@ -188,6 +188,35 @@ export function mediaTypeForPath(filePath: string): keyof typeof WeixinUploadMed
   return "FILE";
 }
 
+export async function downloadWeixinCdnMedia(params: {
+  api: WeixinApiClient;
+  media?: WeixinCdnMedia;
+  cdnBaseUrl: string;
+  aesKey?: string;
+  fallbackUrl?: string;
+  timeoutMs?: number;
+}): Promise<{ body: Buffer; contentType?: string; url: string }> {
+  const media = params.media;
+  const url = media?.full_url?.trim()
+    || params.fallbackUrl?.trim()
+    || (media?.encrypt_query_param
+      ? buildCdnDownloadUrl({
+          cdnBaseUrl: params.cdnBaseUrl,
+          encryptedQueryParam: media.encrypt_query_param,
+        })
+      : undefined);
+  if (!url) throw new Error("weixin media missing download url");
+  const downloaded = await params.api.fetchBinary({ url, timeoutMs: params.timeoutMs });
+  const aesKey = params.aesKey ?? media?.aes_key;
+  const shouldDecrypt = Boolean(aesKey) && media?.encrypt_type !== 0;
+  const body = shouldDecrypt ? decryptAesEcb(downloaded.body, parseWeixinAesKey(aesKey ?? "")) : downloaded.body;
+  return {
+    body,
+    contentType: downloaded.contentType,
+    url,
+  };
+}
+
 function mimeFromFilename(filename: string): string {
   return EXTENSION_TO_MIME[path.extname(filename).toLowerCase()] ?? "application/octet-stream";
 }
@@ -211,6 +240,29 @@ function encryptAesEcb(plaintext: Buffer, key: Buffer): Buffer {
   return Buffer.concat([cipher.update(plaintext), cipher.final()]);
 }
 
+function decryptAesEcb(ciphertext: Buffer, key: Buffer): Buffer {
+  const decipher = crypto.createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
 function buildCdnUploadUrl(params: { cdnBaseUrl: string; uploadParam: string; filekey: string }): string {
   return `${params.cdnBaseUrl}/upload?encrypted_query_param=${encodeURIComponent(params.uploadParam)}&filekey=${encodeURIComponent(params.filekey)}`;
+}
+
+function buildCdnDownloadUrl(params: { cdnBaseUrl: string; encryptedQueryParam: string }): string {
+  return `${params.cdnBaseUrl}/download?encrypted_query_param=${encodeURIComponent(params.encryptedQueryParam)}`;
+}
+
+function parseWeixinAesKey(value: string): Buffer {
+  const trimmed = value.trim();
+  if (/^[0-9a-fA-F]{32}$/.test(trimmed)) {
+    return Buffer.from(trimmed, "hex");
+  }
+  const decoded = Buffer.from(trimmed, "base64");
+  if (decoded.length === 16) return decoded;
+  const decodedText = decoded.toString("ascii");
+  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decodedText)) {
+    return Buffer.from(decodedText, "hex");
+  }
+  throw new Error(`weixin aes_key must decode to 16 raw bytes or 32-char hex string, got ${decoded.length} bytes`);
 }

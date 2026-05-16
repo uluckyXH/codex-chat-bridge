@@ -12,10 +12,14 @@ import type {
   FeishuWsClient,
   FeishuWsConnectionStatus,
 } from "../../src/channels/feishu/feishu-types.js";
+import { Readable } from "node:stream";
 
 export class FakeFeishuClient implements FeishuSdkClient {
   readonly replyPayloads: Array<Parameters<FeishuSdkClient["im"]["message"]["reply"]>[0]> = [];
   readonly createPayloads: Array<Parameters<FeishuSdkClient["im"]["message"]["create"]>[0]> = [];
+  readonly imageCreatePayloads: Array<Parameters<FeishuSdkClient["im"]["image"]["create"]>[0]> = [];
+  readonly fileCreatePayloads: Array<Parameters<FeishuSdkClient["im"]["file"]["create"]>[0]> = [];
+  readonly messageResourceGetPayloads: Array<Parameters<FeishuSdkClient["im"]["messageResource"]["get"]>[0]> = [];
   readonly reactionCreatePayloads: Array<Parameters<FeishuSdkClient["im"]["messageReaction"]["create"]>[0]> = [];
   readonly reactionDeletePayloads: Array<Parameters<FeishuSdkClient["im"]["messageReaction"]["delete"]>[0]> = [];
   probeResponse: FeishuApiResponse<{ pingBotInfo?: { botID?: string; botName?: string } }> = {
@@ -42,7 +46,18 @@ export class FakeFeishuClient implements FeishuSdkClient {
   reactionDeleteResponse: FeishuApiResponse = {
     code: 0,
   };
+  imageCreateResponse = {
+    image_key: "img_upload",
+  };
+  fileCreateResponse = {
+    file_key: "file_upload",
+  };
+  resourceBuffers = new Map<string, Buffer>();
+  resourceHeaders = new Map<string, Record<string, string>>();
   replyError?: Error;
+  imageCreateError?: Error;
+  fileCreateError?: Error;
+  messageResourceError?: Error;
   reactionCreateError?: Error;
   reactionDeleteError?: Error;
 
@@ -56,6 +71,33 @@ export class FakeFeishuClient implements FeishuSdkClient {
       create: async (payload: Parameters<FeishuSdkClient["im"]["message"]["create"]>[0]): Promise<FeishuApiResponse<FeishuSentMessageData>> => {
         this.createPayloads.push(payload);
         return this.createResponse;
+      },
+    },
+    image: {
+      create: async (payload: Parameters<FeishuSdkClient["im"]["image"]["create"]>[0]) => {
+        this.imageCreatePayloads.push(payload);
+        if (this.imageCreateError) throw this.imageCreateError;
+        return this.imageCreateResponse;
+      },
+    },
+    file: {
+      create: async (payload: Parameters<FeishuSdkClient["im"]["file"]["create"]>[0]) => {
+        this.fileCreatePayloads.push(payload);
+        if (this.fileCreateError) throw this.fileCreateError;
+        return this.fileCreateResponse;
+      },
+    },
+    messageResource: {
+      get: async (payload: Parameters<FeishuSdkClient["im"]["messageResource"]["get"]>[0]) => {
+        this.messageResourceGetPayloads.push(payload);
+        if (this.messageResourceError) throw this.messageResourceError;
+        const key = payload.path.file_key;
+        const buffer = this.resourceBuffers.get(key) ?? Buffer.from("feishu-resource");
+        const headers = this.resourceHeaders.get(key) ?? {};
+        return {
+          getReadableStream: () => Readable.from(buffer),
+          headers,
+        };
       },
     },
     messageReaction: {

@@ -4,7 +4,7 @@
 
 当前中间件已经支持 Codex 最终回复通过 `/sendfile` 显式发送图片或文件到渠道，但入站方向还没有真正打通。用户在微信或飞书里发送图片时，中间件目前不能把图片作为可用上下文传给 Codex。
 
-这份文档定义设计和实施边界。当前第一阶段核心逻辑已落地：Bridge 能处理带 `localPath` 的入站图片/文件、route 级 pending media、结构化 `CodexTurnInput`、app-server `localImage` 投递和 busy route 下结构化 steer。真实微信/飞书媒体下载仍属于渠道 adapter 后续实施项。
+这份文档定义设计和实施边界。当前核心逻辑与微信/飞书 adapter 第一阶段已落地：Bridge 能处理带 `localPath` 的入站图片/文件、route 级 pending media、结构化 `CodexTurnInput`、app-server `localImage` 投递和 busy route 下结构化 steer；微信/飞书 adapter 已能把入站图片/文件下载保存到本地，飞书也已支持出站图片/文件发送。
 
 ## 当前现状
 
@@ -19,8 +19,9 @@
 渠道实现现状：
 
 - 微信 adapter 已支持出站 `sendMedia()`，可以把本地图片/文件上传并发送给微信。
-- 微信入站 `weixinMessageToChannelMessage()` 仍只提取 text 和 voice transcription，真实 `image_item` / `file_item` 下载保存待接入。
-- 飞书 adapter 当前 `getCapabilities().media=false`，`feishuEventToChannelMessage()` 仍只接受 `message_type === "text"`，真实图片消息映射和资源下载待接入。
+- 微信入站已识别 `image_item` / `file_item`，通过微信 CDN `full_url` 或 `encrypt_query_param` 下载，必要时按 AES-128-ECB 解密，再保存到本地上传目录并填入 `ChannelMessage.attachments[].localPath`。
+- 飞书 adapter 已声明 `media=true`、`receiveMedia=true`，支持私聊 `text` / `image` / `file` / `post` 消息映射；入站图片和文件通过 `im.messageResource.get` 下载保存。
+- 飞书出站 `sendMedia()` 已支持图片和文件：图片走 `im.image.create` 上传后发送 `msg_type=image`，文件走 `im.file.create` 上传后发送 `msg_type=file`；有 caption 时先发一条文本说明。
 
 Codex 侧现状：
 
@@ -362,21 +363,14 @@ busy guard 仍然阻断会改变执行语义的命令，例如 `/plan`、`/code`
 
 第一阶段：
 
-- `getCapabilities().media` 目前是出站媒体能力，不建议直接复用表示入站媒体。
-- 建议新增更明确的 capability，例如：
+- `getCapabilities().media` 表示当前 adapter 已实现出站媒体发送。
+- `receiveMedia` 表示当前 adapter 已实现入站媒体接收、下载和本地保存。
+- 飞书当前两者都声明为 `true`：
 
 ```ts
-inboundMedia: boolean;
-outboundMedia: boolean;
+media: true;
+receiveMedia: true;
 ```
-
-或保持 `media` 代表出站能力，新增：
-
-```ts
-receiveMedia: boolean;
-```
-
-飞书第一阶段可以是 `receiveMedia=true`、`media=false`，因为它可以接收图片但暂时不一定支持向用户发送媒体文件。
 
 ## 用户可见文案
 
@@ -409,7 +403,7 @@ receiveMedia: boolean;
 
 ```text
 【Chat-Codex中间件提醒】
-已收到附件，但当前只支持把图片交给 Codex 处理。文件处理能力会在后续版本补齐。
+已收到附件，但当前只能处理已成功保存到本地的图片或文件。请稍后重发，或换成图片/文件重新发送。
 ```
 
 ## 实施顺序
@@ -440,18 +434,18 @@ receiveMedia: boolean;
    - Bridge 的 steer buffer 从文本队列扩展为结构化输入队列，保留附件顺序。
    - Mock/Exec adapter 降级为文本。
 
-5. 微信入站图片：
-   - 识别 `image_item`。
-   - 下载保存。
-   - 单图无文本和后续文字流程测试。
+5. 微信入站图片和文件：
+   - 已识别 `image_item` / `file_item`。
+   - 已下载保存并填入 `localPath`。
+   - 已覆盖入站图片/文件下载成功和图片下载失败测试。
 
-6. 飞书入站图片：
-   - 支持私聊图片消息。
-   - 支持图文同消息时直接投递。
-   - 保持飞书多机器人、多 chat route 隔离。
+6. 飞书入站图片和文件：
+   - 已支持私聊图片消息和文件消息。
+   - 已支持富文本 `post` 中提取文本和图片。
+   - 已保持飞书多机器人、多 chat route 隔离由既有 routeKey 机制负责。
 
 7. 普通文件：
-   - 先保存本地并以路径文本交给 Codex。
+   - 已先保存本地并以 `localFile` 降级文本路径交给 Codex。
    - 后续再评估是否需要专门的文件解析、预览或摘要能力。
 
 ## 测试要求
