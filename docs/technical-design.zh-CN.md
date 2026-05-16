@@ -375,6 +375,42 @@ type ChannelMessage = {
 
 `/goal` 是当前 Codex thread 级的实验目标管理命令，不是 collaboration mode，也不进入普通 prompt。`/goal <目标>` 调用 app-server `thread/goal/set` 设置长期目标；`/goal` 调用 `thread/goal/get` 查看；`/goal pause` 和 `/goal resume` 通过 `thread/goal/set` 更新状态；`/goal clear` 调用 `thread/goal/clear` 清除目标。`clear` 表示退出当前 thread 的 Goal 追踪，但不关闭 `features.goals` 实验功能；该实验开关必须通过 Codex 官方 `/experimental` 或 config.toml 管理。
 
+#### 3.3.1 Route Busy 期间的命令阻断
+
+Codex turn 启动时，app-server adapter 会把权限策略、模型策略和 collaboration mode 作为 `turn/start` 参数发送给 Codex。turn 启动后再修改 `/permission`、`/model` 或 `/plan` 不会改写当前 turn，只会影响后续 turn。为了避免用户误判，也避免排队任务和 background goal turn 被中途改变语义，Bridge 需要在当前 route busy 时阻断执行语义修改命令。
+
+busy 判定必须是 route 级，不是全局级。当前 route 满足以下任一条件时视为 busy：
+
+- `routeWorkers.has(routeKey)`。
+- 当前 route 有 background goal turn。
+- 当前 route 的 active session 状态为 `running` 或 `waiting_approval`。
+- 当前 route 存在 pending approval。
+- 当前 route 已有普通 prompt 排队。
+
+busy route 下允许的命令：
+
+- 只读命令：`/help`、`/status`、`/sessions`、`/whoami`、`/debug`、`/permission`、`/model`、`/goal`。
+- 运行控制命令：`/stop`、`/OK`、`/P`、`/NO`。
+- 投递视图命令：`/progress brief|detailed|silent`，因为它只影响当前 route 的进度投递模式，不改变 Codex 执行语义。
+- 普通文本继续按当前 route 队列策略处理；入队时必须快照本轮 `sendFile` 和 collaboration mode。
+
+busy route 下必须拒绝的命令：
+
+- 会话绑定修改：`/new`、`/use`、`/resume`、会话编号选择。
+- 权限修改：`/permission approval`、`/permission full confirm`。
+- 模型修改：`/model <模型或编号> [effort]`、`/model effort <effort>`、`/model default`。
+- 协作模式修改：`/plan`、`/code`、`/default`；带任务版本也拒绝，因为它会先修改 route 后续模式。
+- Goal 修改：`/goal <目标>`、`/goal pause`、`/goal resume`、`/goal clear`。
+
+拒绝提示应使用当前 route 语义，例如：
+
+```text
+当前对话的 Codex 正在执行，不能修改会话、权限、模型或 Goal。
+请等待完成，或发送 /stop 后再修改。
+```
+
+其他 route 不受影响。一个微信私聊或飞书私聊 busy 时，另一个 route 仍可修改自己的 session、权限、模型和 Goal。
+
 ### 3.4 Codex Adapter
 
 Codex 接入也需要抽象，避免早期选择的方案锁死项目。

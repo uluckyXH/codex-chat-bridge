@@ -99,6 +99,40 @@ class BlockingGoalCodexAdapter extends AutoGoalCodexAdapter {
   }
 }
 
+class ManualBackgroundCodexAdapter extends MockCodexAdapter {
+  private readonly backgroundHandlers = new Set<CodexBackgroundEventHandler>();
+  private releaseBackgroundTurn: (() => void) | undefined;
+  backgroundStarted = false;
+
+  onBackgroundEvent(handler: CodexBackgroundEventHandler): () => void {
+    this.backgroundHandlers.add(handler);
+    return () => {
+      this.backgroundHandlers.delete(handler);
+    };
+  }
+
+  async startBlockingBackground(sessionId: string): Promise<void> {
+    const turnId = `manual-background-turn-${Date.now()}`;
+    await this.emitBackground({ type: "turn.started", sessionId, turnId });
+    this.backgroundStarted = true;
+    await new Promise<void>((resolve) => {
+      this.releaseBackgroundTurn = resolve;
+    });
+    await this.emitBackground({ type: "assistant.completed", sessionId, turnId, text: "后台任务完成" });
+    await this.emitBackground({ type: "turn.completed", sessionId, turnId });
+  }
+
+  release(): void {
+    this.releaseBackgroundTurn?.();
+  }
+
+  private async emitBackground(event: CodexEvent): Promise<void> {
+    for (const handler of [...this.backgroundHandlers]) {
+      await handler(event);
+    }
+  }
+}
+
 class FailedTurnCodexAdapter extends MockCodexAdapter {
   override async *run(sessionId: string, _prompt: string): AsyncIterable<CodexEvent> {
     const turnId = `failed-turn-${Date.now()}`;
@@ -696,7 +730,7 @@ test("Bridge manages experimental goal commands for the current session", async 
   assert.ok(channel.sentMessages.at(-1)?.text.includes("当前没有 Goal"));
 });
 
-test("Bridge snapshots collaboration mode when queueing prompts", async () => {
+test("Bridge rejects collaboration mode changes while a route is busy", async () => {
   const channel = new MockChannelAdapter();
   const codex = new BlockingModeCodexAdapter();
   const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
@@ -711,7 +745,109 @@ test("Bridge snapshots collaboration mode when queueing prompts", async () => {
   await bridge.waitForIdle();
   await bridge.stop();
 
-  assert.deepEqual(codex.modeRuns, [undefined, undefined, "plan"]);
+  assert.deepEqual(codex.modeRuns, [undefined, undefined, undefined]);
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("不能修改会话、权限、模型、协作模式或 Goal")));
+});
+
+test("Bridge rejects semantic mutations while the current route is busy", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new BlockingModeCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/new");
+  await channel.emitText("/goal 保持目标");
+  await channel.emitText("第一条");
+  await waitFor(() => codex.modeRuns.length === 1);
+
+  await channel.emitText("/permission full confirm");
+  await channel.emitText("/model gpt-next xhigh");
+  await channel.emitText("/plan");
+  await channel.emitText("/goal clear");
+  await channel.emitText("/status");
+  await channel.emitText("/progress silent");
+  await channel.emitText("/status");
+
+  codex.release();
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  const rejectMessages = channel.sentMessages.filter((message) => message.text.includes("不能修改会话、权限、模型、协作模式或 Goal"));
+  assert.equal(rejectMessages.length, 4);
+  assert.equal(codex.getRunPolicy("mock-codex-1").permissionMode, "approval");
+  assert.deepEqual(codex.getModelPolicy("mock-codex-1"), {});
+  assert.equal(codex.getCollaborationMode("mock-codex-1"), "default");
+  assert.equal((await codex.getGoal("mock-codex-1"))?.objective, "保持目标");
+  const statusMessages = channel.sentMessages.filter((message) => message.text.includes("**Codex 状态**"));
+  assert.ok(statusMessages.some((message) => message.text.includes("处理状态: 正在处理")));
+  assert.ok(statusMessages.at(-1)?.text.includes("进度投递: 静默"));
+});
+
+test("Bridge treats pending approvals as busy for semantic mutations", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new MockCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/new");
+  await channel.emitText("请触发审批 approval");
+  await bridge.waitForIdle();
+  await channel.emitText("/model gpt-next xhigh");
+  await channel.emitText("/OK");
+  await channel.emitText("/model gpt-next xhigh");
+  await bridge.stop();
+
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("不能修改会话、权限、模型、协作模式或 Goal")));
+  assert.deepEqual(codex.getModelPolicy("mock-codex-1"), { model: "gpt-next", reasoningEffort: "xhigh" });
+  const setMessages = channel.sentMessages.filter((message) => message.text.includes("已设置 Codex 模型"));
+  assert.equal(setMessages.length, 1);
+});
+
+test("Bridge keeps route busy mutation guard scoped to the active route", async () => {
+  const channelA = new MockChannelAdapter({ id: "mock-a" });
+  const channelB = new MockChannelAdapter({ id: "mock-b" });
+  const registry = new ChannelRegistry({ channels: [channelA, channelB] });
+  const codex = new BlockingModeCodexAdapter();
+  const bridge = new Bridge({ channels: registry, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channelA.emitText("第一条");
+  await waitFor(() => codex.modeRuns.length === 1);
+  await channelB.emitText("/new");
+  await channelB.emitText("/permission full confirm");
+  await channelA.emitText("/permission full confirm");
+
+  codex.release();
+  await bridge.waitForIdle();
+  await bridge.stop();
+
+  assert.equal(codex.getRunPolicy("mock-codex-1").permissionMode, "approval");
+  assert.equal(codex.getRunPolicy("mock-codex-2").permissionMode, "full");
+  assert.ok(channelA.sentMessages.some((message) => message.text.includes("不能修改会话、权限、模型、协作模式或 Goal")));
+  assert.ok(channelB.sentMessages.some((message) => message.text.includes("已切换 Codex 权限模式: full")));
+});
+
+test("Bridge rejects numbered session selection while the route is busy", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new ManualBackgroundCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/new");
+  await channel.emitText("/new");
+  await channel.emitText("/use");
+  const background = codex.startBlockingBackground("mock-codex-2");
+  await waitFor(() => codex.backgroundStarted);
+  await channel.emitText("2");
+
+  codex.release();
+  await background;
+  await bridge.waitForIdle();
+  await channel.emitText("/status");
+  await bridge.stop();
+
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("不能修改会话、权限、模型、协作模式或 Goal")));
+  assert.ok(channel.sentMessages.at(-1)?.text.includes("当前会话: `mock-codex-2`"));
 });
 
 test("Bridge does not crash when channel text delivery fails", async () => {

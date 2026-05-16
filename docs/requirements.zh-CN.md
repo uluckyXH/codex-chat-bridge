@@ -223,6 +223,9 @@ Git 管理要求：
 - 命令解析应独立于普通消息。
 - `/plan` 和 `/code` 只影响当前 route/session 的后续 turn；已入队普通消息必须保留入队时的 mode 快照。
 - `/goal` 只管理当前 Codex thread 的 goal 状态，不自动启用或关闭 Codex 实验功能；`features.goals` 应通过 Codex 官方 `/experimental` 或 config.toml 预先启用。
+- 当当前 route 正在执行 Codex turn、等待审批、存在 background goal turn，或已有排队 prompt 时，Bridge 应阻断会改变执行语义的命令，避免用户误以为设置会影响已启动 turn。阻断范围只限当前 route，不影响其他微信/飞书私聊或其他 route。
+- busy route 下仍允许只读和控制命令：`/status`、`/help`、`/whoami`、`/debug`、`/sessions`、`/progress`、`/OK`、`/P`、`/NO`、`/stop`。普通文本可以继续按当前队列策略入队。
+- busy route 下应拒绝执行语义修改命令：`/permission approval|full confirm`、`/model <...>`、`/model effort <...>`、`/model default`、`/plan`、`/code`、`/new`、`/use`、`/resume`、会话编号选择、`/goal <目标>`、`/goal pause`、`/goal resume`、`/goal clear`。拒绝提示应明确“请等待完成，或先 `/stop`”。
 - 未知命令不应直接执行危险动作。
 - 管理员命令需要权限校验。
 - 后续应允许配置命令前缀，默认使用 `/`。

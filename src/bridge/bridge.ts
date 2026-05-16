@@ -82,6 +82,10 @@ export type UnboundRoutePolicy = "auto_new" | "ask";
 const PROGRESS_SEND_FAILURE_COOLDOWN_MS = 60_000;
 const APPROVAL_SEND_RETRY_DELAY_MS = 10_000;
 const SEND_FILE_MAX_FILES = 3;
+const ROUTE_BUSY_MUTATION_REJECT_TEXT = [
+  "当前对话的 Codex 正在执行，不能修改会话、权限、模型、协作模式或 Goal。",
+  "请等待完成，或发送 /stop 后再修改。",
+].join("\n");
 
 export class Bridge {
   private readonly channels: ChannelRegistry;
@@ -197,6 +201,10 @@ export class Bridge {
       if (!refreshCommand.silent) {
         await this.sendText(target, refreshCommand.replyText ?? "已刷新。");
       }
+      return;
+    }
+    if (isRouteBusyMutationCommand(name, args, rawText) && await this.isRouteExecutionBusy(message.routeKey)) {
+      await this.sendText(target, ROUTE_BUSY_MUTATION_REJECT_TEXT);
       return;
     }
     switch (name) {
@@ -380,6 +388,20 @@ export class Bridge {
 
   private isRouteBusy(routeKey: string): boolean {
     return this.routeWorkers.has(routeKey) || this.hasBackgroundTurnForRoute(routeKey);
+  }
+
+  private async isRouteExecutionBusy(routeKey: string): Promise<boolean> {
+    if (this.routeWorkers.has(routeKey) || this.hasBackgroundTurnForRoute(routeKey)) return true;
+    if ((this.routeQueues.get(routeKey)?.length ?? 0) > 0) return true;
+    if (this.approvals.list(routeKey).length > 0) return true;
+    const binding = this.state.getBinding(routeKey);
+    if (!binding) return false;
+    try {
+      const status = await this.codex.getStatus(binding.sessionId);
+      return status.type === "running" || status.type === "waiting_approval";
+    } catch {
+      return false;
+    }
   }
 
   private hasBackgroundTurnForRoute(routeKey: string): boolean {
@@ -752,6 +774,10 @@ export class Bridge {
         "正在切换 Codex 会话。",
         "请直接回复列表编号，例如 1；回复“取消”退出。",
       ].join("\n"));
+      return;
+    }
+    if (await this.isRouteExecutionBusy(message.routeKey)) {
+      await this.sendText(target, ROUTE_BUSY_MUTATION_REJECT_TEXT);
       return;
     }
     const choice = selection.choices[choiceIndex - 1];
@@ -1641,6 +1667,35 @@ function parseSessionChoiceIndex(value: string): number | undefined {
 function isCancelSessionSelectionText(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === "取消" || normalized === "退出" || normalized === "cancel" || normalized === "q" || normalized === "quit";
+}
+
+function isRouteBusyMutationCommand(name: string, args: string[], rawText: string): boolean {
+  switch (name) {
+    case "new":
+    case "use":
+    case "resume":
+    case "plan":
+    case "code":
+    case "default":
+      return true;
+    case "permission":
+    case "permissions":
+    case "perm":
+    case "policy":
+      return args.length > 0;
+    case "model":
+      return isModelMutationCommand(args);
+    case "goal":
+      return commandBody(rawText, "goal").length > 0;
+    default:
+      return false;
+  }
+}
+
+function isModelMutationCommand(args: string[]): boolean {
+  const commandArgs = args.filter((arg) => !isModelAllToken(arg) && !isModelListToken(arg));
+  const parsed = parseModelCommandArgs(commandArgs);
+  return parsed.type === "reset" || parsed.type === "effort" || parsed.type === "set";
 }
 
 function formatSessionChoiceLine(choice: SessionChoice, index: number): string {
