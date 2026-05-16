@@ -81,6 +81,24 @@ class AutoGoalCodexAdapter extends MockCodexAdapter {
   }
 }
 
+class FixedGoalTimeCodexAdapter extends MockCodexAdapter {
+  private fixedGoal: CodexGoal | null = null;
+
+  override async setGoal(sessionId: string, objective: string): Promise<CodexGoal> {
+    const goal = await super.setGoal(sessionId, objective);
+    this.fixedGoal = {
+      ...goal,
+      createdAt: 1700000000,
+      updatedAt: 1700000000,
+    };
+    return this.fixedGoal;
+  }
+
+  override async getGoal(sessionId: string): Promise<CodexGoal | null> {
+    return this.fixedGoal ?? super.getGoal(sessionId);
+  }
+}
+
 class BlockingGoalCodexAdapter extends AutoGoalCodexAdapter {
   private releaseBackgroundTurn: (() => void) | undefined;
 
@@ -784,11 +802,26 @@ test("Bridge manages experimental goal commands for the current session", async 
   assert.ok(status.includes("长期目标: 进行中 - 完成微信 Goal 适配并保持测试通过"));
   assert.ok(status.includes("目标 token: `0`"));
   assert.ok(status.includes("目标耗时: `0s`"));
-  assert.match(status, /目标更新时间: `20\d\d-/);
+  assert.match(status, /目标更新时间: `20\d\d-\d\d-\d\d \d\d:\d\d:\d\d（北京时间）`/);
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已暂停 Goal") && message.text.includes("Status: `paused`")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已恢复 Goal") && message.text.includes("Status: `active`")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已清除 Goal")));
   assert.ok(channel.sentMessages.at(-1)?.text.includes("当前没有 Goal"));
+});
+
+test("Bridge status renders Goal updated time in Beijing time", async () => {
+  const channel = new MockChannelAdapter();
+  const codex = new FixedGoalTimeCodexAdapter();
+  const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
+
+  await bridge.start();
+  await channel.emitText("/goal 固定时间 Goal");
+  await channel.emitText("/status");
+  await bridge.stop();
+
+  const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
+  assert.ok(status.includes("目标更新时间: `2023-11-15 06:13:20（北京时间）`"));
+  assert.doesNotMatch(status, /目标更新时间: `[^`]*T[^`]*Z`/);
 });
 
 test("Bridge rejects collaboration mode changes while a route is busy", async () => {

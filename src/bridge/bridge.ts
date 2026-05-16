@@ -2358,7 +2358,35 @@ function formatDuration(seconds: number): string {
 
 function formatGoalTimestamp(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "unknown";
-  return new Date(seconds * 1000).toISOString();
+  return formatChinaDateTime(seconds * 1000);
+}
+
+const chinaDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+function formatChinaDateTime(timestampMs: number): string {
+  const parts = Object.fromEntries(
+    chinaDateTimeFormatter
+      .formatToParts(new Date(timestampMs))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  const year = parts.year;
+  const month = parts.month;
+  const day = parts.day;
+  const hour = parts.hour;
+  const minute = parts.minute;
+  const second = parts.second;
+  if (!year || !month || !day || !hour || !minute || !second) return "unknown";
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}（北京时间）`;
 }
 
 function goalErrorText(error: unknown): string {
