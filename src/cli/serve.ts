@@ -21,7 +21,7 @@ import {
 } from "../codex/codex-cli.js";
 import { ExecCodexAdapter } from "../codex/exec-codex-adapter.js";
 import type { CodexAdapter } from "../codex/types.js";
-import { resolveNewSessionWorkdir } from "../codex/workdir.js";
+import { checkNewSessionWorkdir, resolveNewSessionWorkdir } from "../codex/workdir.js";
 import { ConsoleLogger } from "../logging/logger.js";
 import { ConsoleTranscriptSink } from "../logging/transcript.js";
 import type { ChannelLoginResult, ChannelStatus } from "../protocol/channel.js";
@@ -52,6 +52,7 @@ import {
   formatStartConfirmation,
   formatUnboundRoutePolicyForUser,
   formatUnboundRoutePolicyMenu,
+  formatWorkdirSettingsMenu,
   parseChannelManageChoice,
   parseFirstRouteSetupChoice,
   parseRouteManageChoice,
@@ -179,7 +180,7 @@ async function runServeHomeLoop(
       channels: channelSummaries.map(toServeChannelSummary),
       routes: routeSummary(plan),
     }));
-    const defaultChoice = channelSummaries.length === 0 ? "1" : "5";
+    const defaultChoice = channelSummaries.length === 0 ? "1" : "6";
     const input = await rl.question(`请选择 [${defaultChoice}]: `);
     const choice = parseServeHomeChoice(input.trim() ? input : defaultChoice);
     if (choice === "exit") return false;
@@ -193,6 +194,10 @@ async function runServeHomeLoop(
     }
     if (choice === "codex_settings") {
       await runCodexSettingsLoop(rl, startup);
+      continue;
+    }
+    if (choice === "workdir_settings") {
+      await configureWorkdir(rl, startup);
       continue;
     }
     if (choice === "status") {
@@ -980,12 +985,44 @@ async function configurePermissionMode(rl: Interface, startup: PreparedServeStar
 }
 
 async function configureWorkdir(rl: Interface, startup: PreparedServeStartup): Promise<void> {
-  console.log("");
-  console.log(`当前新 session 工作目录: ${startup.cwd}`);
-  const answer = (await rl.question("请输入新目录路径 [留空保持，0 返回]: ")).trim();
-  if (!answer || answer === "0" || isBackText(answer)) return;
+  for (;;) {
+    console.log("");
+    console.log(formatWorkdirSettingsMenu(startup.cwd));
+    const answer = normalizeText(await rl.question("请选择 [0 返回]: "));
+    if (!answer || answer === "0" || isBackText(answer)) return;
+    if (answer === "1" || answer === "current" || answer === "当前" || answer === "cwd") {
+      await setStartupWorkdirFromInput(rl, startup, undefined);
+      continue;
+    }
+    if (answer === "2" || answer === "input" || answer === "manual" || answer === "path" || answer === "目录") {
+      const input = (await rl.question("请输入目录路径 [0 返回]: ")).trim();
+      if (!input || input === "0" || isBackText(input)) continue;
+      await setStartupWorkdirFromInput(rl, startup, input);
+      continue;
+    }
+    console.log("未识别选择，请重新输入。");
+  }
+}
+
+async function setStartupWorkdirFromInput(rl: Interface, startup: PreparedServeStartup, input: string | undefined): Promise<void> {
+  const checked = checkNewSessionWorkdir(input, process.cwd());
+  if (checked.ok) {
+    startup.cwd = checked.cwd;
+    console.log(`已设置新 session 工作目录: ${startup.cwd}`);
+    return;
+  }
+  if (checked.reason === "not_directory") {
+    console.log(`工作目录设置失败: ${checked.message}`);
+    return;
+  }
+  console.log(checked.message);
+  const answer = normalizeText(await rl.question("是否创建并使用这个目录？[y/N]: "));
+  if (answer !== "y" && answer !== "yes" && answer !== "是") {
+    console.log("已取消工作目录设置。");
+    return;
+  }
   try {
-    const resolved = resolveNewSessionWorkdir(answer, process.cwd());
+    const resolved = resolveNewSessionWorkdir(checked.cwd, process.cwd());
     startup.cwd = resolved.cwd;
     console.log(`${resolved.created ? "已创建并设置" : "已设置"}新 session 工作目录: ${startup.cwd}`);
   } catch (error) {
@@ -1072,6 +1109,7 @@ function codexSummary(startup: PreparedServeStartup) {
   return {
     adapterMode: startup.adapterMode,
     permissionMode: startup.policy.permissionMode,
+    cwd: startup.cwd,
     progressMode: startup.progressMode,
     progressDisabled: true,
     maxConcurrentTurns: startup.maxConcurrentTurns,

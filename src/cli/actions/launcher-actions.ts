@@ -12,6 +12,7 @@ import { formatCodexSessionTitleForDisplay, findCodexSessionById, type CodexRunP
 import { AppServerCodexAdapter } from "../../codex/app-server-codex-adapter.js";
 import { ExecCodexAdapter } from "../../codex/exec-codex-adapter.js";
 import type { CodexAdapter } from "../../codex/types.js";
+import { checkNewSessionWorkdir, resolveNewSessionWorkdir } from "../../codex/workdir.js";
 import type { ChannelLoginResult } from "../../protocol/channel.js";
 import { FileStateStore } from "../../state/file-state-store.js";
 import { pendingBindingOwnerRouteKey } from "../../state/memory-state-store.js";
@@ -67,6 +68,10 @@ export type FeishuBotSetupResult =
 export type WeixinPrimaryBindingResult =
   | { ok: true; message: string; pending?: PendingBindingRecord; session?: SessionDisplay }
   | { ok: false; reason: "missing_account" | "not_found" | "owner_conflict" | "error"; message: string };
+
+export type WorkdirSetupResult =
+  | { ok: true; cwd: string; created: boolean; message: string }
+  | { ok: false; reason: "missing" | "not_directory" | "error"; cwd?: string; message: string };
 
 export class LauncherActions {
   private weixinLogin?: {
@@ -242,6 +247,41 @@ export class LauncherActions {
   setDefaultPermission(policy: CodexRunPolicy): CodexRunPolicy {
     this.startup.policy = policy;
     return this.startup.policy;
+  }
+
+  getCurrentProcessWorkdir(): string {
+    return process.cwd();
+  }
+
+  setDefaultWorkdir(input?: string, options: { createIfMissing?: boolean } = {}): WorkdirSetupResult {
+    const checked = checkNewSessionWorkdir(input, process.cwd());
+    if (checked.ok) {
+      this.startup.cwd = checked.cwd;
+      return {
+        ok: true,
+        cwd: this.startup.cwd,
+        created: false,
+        message: `已设置新 session 工作目录：${this.startup.cwd}`,
+      };
+    }
+    if (checked.reason === "not_directory") {
+      return { ok: false, reason: "not_directory", cwd: checked.cwd, message: checked.message };
+    }
+    if (!options.createIfMissing) {
+      return { ok: false, reason: "missing", cwd: checked.cwd, message: `${checked.message}。确认后会创建这个目录。` };
+    }
+    try {
+      const resolved = resolveNewSessionWorkdir(checked.cwd, process.cwd());
+      this.startup.cwd = resolved.cwd;
+      return {
+        ok: true,
+        cwd: this.startup.cwd,
+        created: resolved.created,
+        message: `${resolved.created ? "已创建并设置" : "已设置"}新 session 工作目录：${this.startup.cwd}`,
+      };
+    } catch (error) {
+      return { ok: false, reason: "error", cwd: checked.cwd, message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   listWeixinPrimaryChoices(channel: ChannelInstanceRecord): SessionChoices | undefined {

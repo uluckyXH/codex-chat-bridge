@@ -305,7 +305,7 @@ feishu:work:thread:thread-789
 npm run chat-codex
 ```
 
-`npm run chat-codex` 是面向日常使用的主入口；`npm run cli:chat-codex` 是同等别名。TTY 环境下默认进入 Ink TUI，包含 Codex 检查、渠道账号管理、聊天绑定管理、权限设置和启动确认。需要回到普通 prompt 交互时可加 `-- --no-tui`。
+`npm run chat-codex` 是面向日常使用的主入口；`npm run cli:chat-codex` 是同等别名。TTY 环境下默认进入 Ink TUI，包含 Codex 检查、渠道账号管理、聊天绑定管理、权限设置、工作目录设置和启动确认。需要回到普通 prompt 交互时可加 `-- --no-tui`。
 
 微信和飞书不再暴露单渠道 Codex 启动入口。统一入口会从本地配置读取所有已启用的微信账号和飞书机器人，并在启动服务时一起启动。
 

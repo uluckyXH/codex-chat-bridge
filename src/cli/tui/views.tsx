@@ -26,6 +26,7 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
       ["1. 添加微信账号", "扫码登录后配置微信主聊天绑定"],
       ["2. 添加飞书机器人", "输入 App ID / App Secret，启动后等待私聊"],
       ["3. 权限设置", formatPermission(dashboard.startup.policy)],
+      ["4. 工作目录", dashboard.startup.cwd],
       ["0. 退出", "返回终端"],
     ];
     return (
@@ -33,11 +34,15 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
         <Section title="欢迎使用 Chat Codex">
           <Text>还没有配置任何渠道。请先添加微信账号或飞书机器人。</Text>
         </Section>
+        <Section title="默认配置">
+          <KeyValue label="新 session 工作目录" value={dashboard.startup.cwd} />
+          <KeyValue label="新 session 权限" value={formatPermission(dashboard.startup.policy)} />
+        </Section>
         <Section title="操作">
           {actions.map(([label, value], index) => <ListRow key={label} active={selected === index} left={label} right={value} />)}
         </Section>
         <Section title="快捷键">
-          <Text>↑↓ 选择  Enter 执行  1/w 微信  2/f 飞书  3/p 权限  q 退出</Text>
+          <Text>↑↓ 选择  Enter 执行  1/w 微信  2/f 飞书  3/p 权限  4/d 工作目录  q 退出</Text>
         </Section>
       </Frame>
     );
@@ -46,8 +51,9 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
     ["1. 管理渠道", `${dashboard.channels.length} 个渠道`],
     ["2. 聊天绑定", `${dashboard.routes.bound}/${dashboard.routes.known} 已绑定，${dashboard.routes.pending ?? 0} 个待生效`],
     ["3. 权限设置", formatPermission(dashboard.startup.policy)],
-    ["4. 状态详情", "查看渠道和绑定明细"],
-    ["5. 启动服务", dashboard.canStart.ok ? "可以启动" : "需处理配置"],
+    ["4. 工作目录", dashboard.startup.cwd],
+    ["5. 状态详情", "查看渠道和绑定明细"],
+    ["6. 启动服务", dashboard.canStart.ok ? "可以启动" : "需处理配置"],
   ];
   return (
     <Frame title="Chat Codex" subtitle={`状态: ${dashboard.canStart.ok ? "可启动" : "需配置"}  权限: ${dashboard.startup.policy.permissionMode === "full" ? "完全" : "审批"}`}>
@@ -65,6 +71,9 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
       </Section>
       <Section title="聊天绑定">
         <Text>已发现 {dashboard.routes.known} 个聊天，已绑定 {dashboard.routes.bound} 个 session，待生效 {dashboard.routes.pending ?? 0} 个。</Text>
+      </Section>
+      <Section title="工作目录">
+        <KeyValue label="新 session" value={dashboard.startup.cwd} />
       </Section>
       <Section title="提示">
         <Text>{dashboard.canStart.message}</Text>
@@ -262,6 +271,34 @@ export function PermissionView({ target, startupPolicy, sessionPolicy, selected 
   );
 }
 
+export function WorkdirView({ cwd, processCwd, selected }: { cwd: string; processCwd: string; selected: number }): React.JSX.Element {
+  return (
+    <Frame title="工作目录" subtitle="Enter 执行  m 输入路径  Esc 返回">
+      <KeyValue label="当前新 session" value={cwd} />
+      <KeyValue label="当前终端目录" value={processCwd} />
+      <Section title="说明">
+        <Muted text="只影响以后新建的 session；已有 session 继续使用自己的工作目录。" />
+      </Section>
+      <Section title="操作">
+        <ListRow active={selected === 0} left="1. 使用当前终端目录" right={processCwd} />
+        <ListRow active={selected === 1} left="2. 输入目录路径" right="支持绝对路径、相对路径和 ~" />
+      </Section>
+    </Frame>
+  );
+}
+
+export function WorkdirInputView({ value, onChange, onSubmit }: { value: string; onChange(value: string): void; onSubmit(value: string): void | Promise<void> }): React.JSX.Element {
+  return (
+    <Frame title="输入工作目录" subtitle="Enter 保存  Esc 返回">
+      <Text>请输入以后新建 Codex session 使用的工作目录。</Text>
+      <Box marginTop={1}>
+        <Text>目录: </Text>
+        <TextInput defaultValue={value} placeholder="./project" onChange={onChange} onSubmit={onSubmit} />
+      </Box>
+    </Frame>
+  );
+}
+
 export function StatusView({ dashboard }: { dashboard: LauncherDashboard }): React.JSX.Element {
   return (
     <Frame title="状态详情" subtitle="Enter/Esc 返回">
@@ -306,7 +343,7 @@ export function HelpView(): React.JSX.Element {
     <Frame title="快捷键" subtitle="Enter/Esc 返回">
       {[
         "全局: ↑↓ 选择，Enter 执行，Esc/q 返回，r 刷新，? 帮助。",
-        "首页: c 渠道，b 绑定，p 权限，s 状态，w 添加微信，f 添加飞书。",
+        "首页: c 渠道，b 绑定，p 权限，d 工作目录，s 状态，w 添加微信，f 添加飞书。",
         "渠道: w 添加微信，f 添加飞书，e 启停。",
         "绑定: n 新建并绑定，m 手动绑定，u 解绑，p 权限。",
       ].map((line) => <Text key={line}>{line}</Text>)}

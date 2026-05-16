@@ -464,7 +464,7 @@ Session 选择页快捷键：
 - 绑定已有 session 时使用 Codex 历史 session 自带的 cwd，不修改已有 session。
 - 输入不存在的目录时，先显示确认提示，再创建目录并保存。
 - 保存后刷新首页、启动确认页和运行日志页中的工作目录。
-- 工作目录应通过 actions/services 持久化到本地配置，TUI 不直接写 `state/bridge/config.json`。
+- 工作目录通过 actions/services 修改当前启动进程内的默认值；当前阶段不持久化固定默认目录，TUI 不直接写 `state/bridge/config.json`。
 
 ## 状态详情
 
@@ -541,7 +541,7 @@ Actions / Services：
 - 飞书添加机器人不落盘 secret。
 - session 选择 owner 冲突。
 - 默认权限和 session 级权限。
-- 新 session 默认工作目录读取、保存、目录创建确认和重启恢复。
+- 新 session 默认工作目录读取、当前进程内保存和目录创建确认。
 
 TUI 组件：
 

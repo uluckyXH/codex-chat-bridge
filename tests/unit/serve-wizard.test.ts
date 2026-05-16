@@ -11,6 +11,7 @@ import {
   formatServeHomeSummary,
   formatStartConfirmation,
   formatUnboundRoutePolicyMenu,
+  formatWorkdirSettingsMenu,
   parseChannelManageChoice,
   parseFirstRouteSetupChoice,
   parseRouteManageChoice,
@@ -47,6 +48,7 @@ test("serve wizard formats channel-first home summary with Chinese actions", () 
     codex: {
       adapterMode: "app-server",
       permissionMode: "approval",
+      cwd: "/repo",
       progressMode: "brief",
       progressDisabled: true,
     },
@@ -66,7 +68,10 @@ test("serve wizard formats channel-first home summary with Chinese actions", () 
   assert.ok(text.includes("1. 管理渠道"));
   assert.ok(text.includes("2. 聊天绑定"));
   assert.ok(text.includes("3. 权限设置"));
-  assert.ok(text.includes("5. 启动服务"));
+  assert.ok(text.includes("4. 工作目录"));
+  assert.ok(text.includes("5. 状态详情"));
+  assert.ok(text.includes("6. 启动服务"));
+  assert.ok(text.includes("新 session 工作目录: /repo"));
   assert.ok(text.includes("0. 退出"));
   assert.ok(text.includes("- 微信（weixin）- 已启用，已连接"));
   assert.ok(text.includes("主要能力: 文本、私聊、图片/文件、输入状态、扫码登录"));
@@ -82,8 +87,10 @@ test("serve wizard parses home and submenu choices", () => {
   assert.equal(parseServeHomeChoice("2"), "manage_routes");
   assert.equal(parseServeHomeChoice("3"), "codex_settings");
   assert.equal(parseServeHomeChoice("权限"), "codex_settings");
-  assert.equal(parseServeHomeChoice("4"), "status");
-  assert.equal(parseServeHomeChoice("5"), "start");
+  assert.equal(parseServeHomeChoice("4"), "workdir_settings");
+  assert.equal(parseServeHomeChoice("d"), "workdir_settings");
+  assert.equal(parseServeHomeChoice("5"), "status");
+  assert.equal(parseServeHomeChoice("6"), "start");
   assert.equal(parseServeHomeChoice("0"), "exit");
 
   assert.equal(parseChannelManageChoice(""), "login");
@@ -152,6 +159,14 @@ test("serve wizard formats mode pages with return actions", () => {
   assert.ok(settingsText.includes("1. 审批模式"));
   assert.ok(settingsText.includes("2. 完全权限"));
   assert.ok(settingsText.includes("0. 返回"));
+
+  const workdirText = formatWorkdirSettingsMenu("/repo");
+  assert.ok(workdirText.includes("当前位置：首页 > 工作目录"));
+  assert.ok(workdirText.includes("当前新 session 工作目录"));
+  assert.ok(workdirText.includes("/repo"));
+  assert.ok(workdirText.includes("1. 使用当前终端目录"));
+  assert.ok(workdirText.includes("2. 输入目录路径"));
+  assert.ok(workdirText.includes("只影响以后新建的 session"));
 
   const startText = formatStartConfirmation({
     codex: {

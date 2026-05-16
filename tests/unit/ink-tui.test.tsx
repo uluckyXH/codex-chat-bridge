@@ -15,6 +15,8 @@ test("Ink TUI renders dashboard and navigates to core pages", async () => {
   assert.match(view.lastFrame() ?? "", /渠道/);
   assert.match(view.lastFrame() ?? "", /聊天绑定/);
   assert.match(view.lastFrame() ?? "", /权限/);
+  assert.match(view.lastFrame() ?? "", /工作目录/);
+  assert.match(view.lastFrame() ?? "", /\/repo/);
 
   view.stdin.write("c");
   await waitForInk();
@@ -37,6 +39,13 @@ test("Ink TUI renders dashboard and navigates to core pages", async () => {
   await waitForInk();
   assert.match(view.lastFrame() ?? "", /默认权限设置/);
   assert.match(view.lastFrame() ?? "", /审批模式/);
+
+  view.stdin.write("\u001B");
+  await waitForInk();
+  view.stdin.write("d");
+  await waitForInk();
+  assert.match(view.lastFrame() ?? "", /工作目录/);
+  assert.match(view.lastFrame() ?? "", /当前终端目录/);
 
   view.unmount();
 });
@@ -81,6 +90,7 @@ test("Ink TUI first run guides user to add channels with Enter and number shortc
   assert.match(view.lastFrame() ?? "", /首次配置/);
   assert.match(view.lastFrame() ?? "", /1\. 添加微信账号/);
   assert.match(view.lastFrame() ?? "", /2\. 添加飞书机器人/);
+  assert.match(view.lastFrame() ?? "", /4\. 工作目录/);
   assert.match(view.lastFrame() ?? "", /↑↓ 选择/);
   assert.match(view.lastFrame() ?? "", /0\/q 退出/);
 
@@ -107,11 +117,41 @@ test("Ink TUI first run exit action is selectable", async () => {
   view.stdin.write("\u001B[B");
   view.stdin.write("\u001B[B");
   view.stdin.write("\u001B[B");
+  view.stdin.write("\u001B[B");
   await waitForInk();
   view.stdin.write("\r");
   await waitForInk();
 
   assert.deepEqual(result, { start: false });
+  view.unmount();
+});
+
+test("Ink TUI updates new session workdir from current directory and manual input", async () => {
+  const dashboard = dashboardFixture();
+  const view = render(<ChatCodexTui actions={mockActions(dashboard)} onDone={() => undefined} />);
+  await waitForInk();
+
+  view.stdin.write("d");
+  await waitForInk();
+  assert.match(view.lastFrame() ?? "", /当前新 session\s+\/repo/);
+  assert.match(view.lastFrame() ?? "", /当前终端目录\s+\/terminal\/repo/);
+
+  view.stdin.write("\r");
+  await waitForInk();
+  assert.equal(dashboard.startup.cwd, "/terminal/repo");
+  assert.match(view.lastFrame() ?? "", /\/terminal\/repo/);
+
+  view.stdin.write("m");
+  await waitForInk();
+  assert.match(view.lastFrame() ?? "", /输入工作目录/);
+
+  view.stdin.write("/tmp/manual-repo");
+  await waitForInk();
+  view.stdin.write("\r");
+  await waitForInk();
+  assert.equal(dashboard.startup.cwd, "/tmp/manual-repo");
+  assert.match(view.lastFrame() ?? "", /\/tmp\/manual-repo/);
+
   view.unmount();
 });
 
@@ -194,6 +234,15 @@ function mockActions(dashboard: LauncherDashboard): LauncherActions {
     listSessionChoices: () => ({ selectable: [], unavailable: [] }),
     listWeixinPrimaryChoices: () => ({ selectable: [], unavailable: [] }),
     formatRunPolicy: () => "审批模式（workspace-write 沙箱）",
+    getCurrentProcessWorkdir: () => "/terminal/repo",
+    setDefaultWorkdir: (input?: string, options?: { createIfMissing?: boolean }) => {
+      const cwd = input?.trim() || "/terminal/repo";
+      if (cwd === "/missing/repo" && !options?.createIfMissing) {
+        return { ok: false, reason: "missing", cwd, message: "工作目录不存在: /missing/repo。确认后会创建这个目录。" };
+      }
+      dashboard.startup.cwd = cwd;
+      return { ok: true, cwd, created: Boolean(options?.createIfMissing), message: `已设置新 session 工作目录：${cwd}` };
+    },
     startConfirmationSummary: () => [
       "即将启动",
       "",

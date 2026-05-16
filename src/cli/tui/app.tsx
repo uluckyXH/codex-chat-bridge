@@ -27,6 +27,8 @@ import {
   StartConfirmView,
   StatusView,
   WeixinBindingView,
+  WorkdirInputView,
+  WorkdirView,
 } from "./views.js";
 
 export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.Element {
@@ -57,7 +59,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
   }, []);
 
   useEffect(() => {
-    setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 4 : 0);
+    setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 5 : 0);
     setConfirm(undefined);
     setManualValue("");
   }, [screen.name, dashboard?.channels.length]);
@@ -157,6 +159,10 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "bindings" });
       return;
     }
+    if (screen.name === "workdirInput") {
+      setScreen({ name: "workdir" });
+      return;
+    }
     if (screen.name === "permission" && screen.target.kind === "session") {
       setScreen({ name: "bindingDetail", routeKey: screen.target.routeKey });
       return;
@@ -165,7 +171,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
   };
 
   useInput((input, key) => {
-    if (screen.name === "addFeishu" || screen.name === "manualSession") {
+    if (screen.name === "addFeishu" || screen.name === "manualSession" || screen.name === "workdirInput") {
       if (key.escape) back();
       return;
     }
@@ -207,20 +213,21 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     else if (screen.name === "bindingDetail" && currentBinding) void handleBindingDetailInput(input, key.return, currentBinding);
     else if (screen.name === "sessionSelect") void handleSessionSelectInput(input, key.return);
     else if (screen.name === "permission") void handlePermissionInput(input, key.return, screen.target);
+    else if (screen.name === "workdir") void handleWorkdirInput(input, key.return);
     else if ((screen.name === "status" || screen.name === "help") && key.return) goHome();
     else if (screen.name === "startConfirm" && key.return) start();
   });
 
   const handleHomeInput = (input: string, enter: boolean): void => {
     const noChannels = channels.length === 0;
-    const picked = numericPick(input, noChannels ? 3 : 5);
+    const picked = numericPick(input, noChannels ? 4 : 6);
     const actionIndex = picked ?? selected;
     const actionRequested = enter || picked !== undefined;
     if (input === "0") {
       quit();
       return;
     }
-    if (noChannels && actionIndex === 3 && enter) {
+    if (noChannels && actionIndex === 4 && enter) {
       quit();
       return;
     }
@@ -236,6 +243,10 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "permission", target: { kind: "default" } });
       return;
     }
+    if (input === "d" || (actionIndex === 3 && actionRequested)) {
+      setScreen({ name: "workdir" });
+      return;
+    }
     if (input === "c" || (!noChannels && actionIndex === 0 && actionRequested)) {
       setScreen({ name: "channels" });
       return;
@@ -244,11 +255,11 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "bindings" });
       return;
     }
-    if (input === "s" || (!noChannels && actionIndex === 3 && actionRequested)) {
+    if (input === "s" || (!noChannels && actionIndex === 4 && actionRequested)) {
       setScreen({ name: "status" });
       return;
     }
-    if (enter || (!noChannels && actionIndex === 4 && picked !== undefined)) openNeedsAttention();
+    if (enter || (!noChannels && actionIndex === 5 && picked !== undefined)) openNeedsAttention();
   };
 
   const handleChannelsInput = async (input: string, enter: boolean): Promise<void> => {
@@ -463,6 +474,19 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     await savePermission(target, policy);
   };
 
+  const handleWorkdirInput = async (input: string, enter: boolean): Promise<void> => {
+    const pick = numericPick(input, 2);
+    const index = pick ?? selected;
+    if (!enter && pick === undefined && input !== "c" && input !== "d" && input !== "m") return;
+    if (input === "m" || index === 1) {
+      setScreen({ name: "workdirInput" });
+      return;
+    }
+    if (input === "c" || input === "d" || index === 0) {
+      await saveWorkdir(undefined);
+    }
+  };
+
   const submitFeishuValue = async (value: string): Promise<void> => {
     if (!screenIs("addFeishu", screen)) return;
     const trimmed = value.trim();
@@ -495,6 +519,26 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setFlash({ kind: "success", message: `已设置当前 session 权限：${actions.formatRunPolicy(policy)}` });
     }
     await refresh();
+  };
+
+  const saveWorkdir = async (value: string | undefined, createIfMissing = false): Promise<void> => {
+    const result = actions.setDefaultWorkdir(value, { createIfMissing });
+    if (result.ok) {
+      setConfirm(undefined);
+      setFlash({ kind: "success", message: result.message });
+      await refresh();
+      return;
+    }
+    if (result.reason === "missing" && result.cwd) {
+      setConfirm({
+        message: `${result.message} 按 y 创建并使用，按 n 取消。`,
+        yes: async () => {
+          await saveWorkdir(result.cwd, true);
+        },
+      });
+      return;
+    }
+    setFlash({ kind: "error", message: result.message });
   };
 
   const createAndBind = async (routeKey: string): Promise<void> => {
@@ -554,6 +598,11 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen(screen.target.kind === "route" ? { name: "bindingDetail", routeKey: screen.target.routeKey } : { name: "weixinBinding", channelId: screen.target.channelId });
     }} />;
     if (screen.name === "permission") return <PermissionView target={screen.target} startupPolicy={actions.getStartup().policy} sessionPolicy={screen.target.kind === "session" ? actions.getSessionPermission(screen.target.session.id) : undefined} selected={selected} />;
+    if (screen.name === "workdir") return <WorkdirView cwd={actions.getStartup().cwd} processCwd={actions.getCurrentProcessWorkdir()} selected={selected} />;
+    if (screen.name === "workdirInput") return <WorkdirInputView value={manualValue} onChange={setManualValue} onSubmit={async (value) => {
+      await saveWorkdir(value.trim());
+      setScreen({ name: "workdir" });
+    }} />;
     if (screen.name === "status") return <StatusView dashboard={dashboard} />;
     if (screen.name === "startConfirm") return <StartConfirmView validation={dashboard.canStart} lines={dashboard.canStart.ok ? actions.startConfirmationSummary(dashboard.canStart.channels) : [dashboard.canStart.message]} />;
     return <HelpView />;
@@ -582,9 +631,10 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
 function maxSelectableIndex(screen: Screen, channels: LauncherDashboard["channels"], bindingItemCount: number): number {
   if (screen.name === "channels") return channels.length > 0 ? Math.max(0, channels.length - 1) : 1;
   if (screen.name === "bindings") return Math.max(0, bindingItemCount - 1);
-  if (screen.name === "home") return channels.length === 0 ? 3 : 4;
+  if (screen.name === "home") return channels.length === 0 ? 4 : 5;
   if (screen.name === "channelDetail" || screen.name === "bindingDetail") return 3;
   if (screen.name === "permission") return 1;
+  if (screen.name === "workdir") return 1;
   return 30;
 }
 

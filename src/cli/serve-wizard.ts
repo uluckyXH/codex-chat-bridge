@@ -6,6 +6,7 @@ export type ServeHomeChoice =
   | "manage_channels"
   | "manage_routes"
   | "codex_settings"
+  | "workdir_settings"
   | "status"
   | "start"
   | "exit";
@@ -25,6 +26,7 @@ export type UnboundRoutePolicy = "auto_new" | "ask";
 export interface ServeCodexSummary {
   adapterMode: "app-server" | "exec";
   permissionMode: CodexPermissionMode;
+  cwd: string;
   progressMode?: ProgressDeliveryMode;
   progressDisabled?: boolean;
   maxConcurrentTurns?: number;
@@ -56,11 +58,12 @@ export interface ServeHomeSummary {
 
 export function parseServeHomeChoice(input: string | undefined): ServeHomeChoice {
   const normalized = normalizeChoice(input);
-  if (!normalized || normalized === "5" || normalized === "start" || normalized === "s" || normalized === "启动") return "start";
+  if (!normalized || normalized === "6" || normalized === "start" || normalized === "s" || normalized === "启动") return "start";
   if (normalized === "1" || normalized === "channel" || normalized === "channels" || normalized === "渠道") return "manage_channels";
   if (normalized === "2" || normalized === "route" || normalized === "routes" || normalized === "绑定") return "manage_routes";
   if (normalized === "3" || normalized === "permission" || normalized === "permissions" || normalized === "权限" || normalized === "设置") return "codex_settings";
-  if (normalized === "4" || normalized === "status" || normalized === "状态") return "status";
+  if (normalized === "4" || normalized === "workdir" || normalized === "cwd" || normalized === "目录" || normalized === "d") return "workdir_settings";
+  if (normalized === "5" || normalized === "status" || normalized === "状态") return "status";
   if (normalized === "0" || normalized === "q" || normalized === "quit" || normalized === "exit") return "exit";
   return "start";
 }
@@ -138,6 +141,9 @@ export function formatServeHomeSummary(summary: ServeHomeSummary): string {
     "权限",
     `- 新 session 默认权限: ${formatPermissionModeForUser(summary.codex.permissionMode)}`,
     "",
+    "工作目录",
+    `- 新 session 工作目录: ${summary.codex.cwd}`,
+    "",
     "提示",
     "- 配置好后，需要启动服务才会真正的工作！",
     "",
@@ -145,8 +151,9 @@ export function formatServeHomeSummary(summary: ServeHomeSummary): string {
     "1. 管理渠道",
     "2. 聊天绑定",
     "3. 权限设置",
-    "4. 状态详情",
-    "5. 启动服务",
+    "4. 工作目录",
+    "5. 状态详情",
+    "6. 启动服务",
     "0. 退出",
   );
   return lines.join("\n");
@@ -224,6 +231,24 @@ export function formatCodexSettingsMenu(input: ServeCodexSummary & { cwd: string
     "",
     "1. 审批模式（workspace-write 沙箱，推荐）",
     "2. 完全权限（跳过审批和沙箱，高风险）",
+    "0. 返回",
+  ].join("\n");
+}
+
+export function formatWorkdirSettingsMenu(cwd: string): string {
+  return [
+    "Codex Chat Bridge",
+    "当前位置：首页 > 工作目录",
+    "",
+    "当前新 session 工作目录",
+    cwd,
+    "",
+    "说明",
+    "- 只影响以后新建的 session；已有 session 继续使用自己的工作目录。",
+    "",
+    "操作",
+    "1. 使用当前终端目录",
+    "2. 输入目录路径",
     "0. 返回",
   ].join("\n");
 }

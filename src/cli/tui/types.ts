@@ -24,6 +24,8 @@ export type Screen =
   | { name: "sessionSelect"; target: SessionTarget }
   | { name: "manualSession"; target: SessionTarget }
   | { name: "permission"; target: PermissionTarget }
+  | { name: "workdir" }
+  | { name: "workdirInput" }
   | { name: "status" }
   | { name: "startConfirm" }
   | { name: "help" };
