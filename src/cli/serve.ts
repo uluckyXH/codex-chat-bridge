@@ -30,6 +30,8 @@ import { ChannelActions, formatManagedChannelList, type ManagedChannelSummary } 
 import { LauncherActions } from "./actions/launcher-actions.js";
 import type { PreparedServeStartup, RealCodexAdapterMode, ServeChannelPlan, ServeStartupOptions } from "./launcher-types.js";
 import { runChatCodexTui } from "./tui/run-tui.js";
+import { runRuntimeLogTui } from "./tui/run-runtime-log.js";
+import { RuntimeLogStore, RuntimeTuiLogger, RuntimeTuiTranscriptSink } from "./tui/runtime-log.js";
 import { FileStateStore } from "../state/file-state-store.js";
 import { pendingBindingOwnerRouteKey } from "../state/memory-state-store.js";
 import type { ChannelInstanceRecord } from "../state/persistent-state-types.js";
@@ -92,7 +94,7 @@ export async function runServe(options: ServeStartupOptions = {}): Promise<void>
     rl?.close();
   }
   if (!startup || !plan) return;
-  await startServeBridge(startup, plan, channelActions);
+  await startServeBridge(startup, plan, channelActions, { tui: useTui });
 }
 
 async function prepareCodexServeStartup(options: ServeStartupOptions, rl?: Interface, display: { quiet?: boolean } = {}): Promise<PreparedServeStartup> {
@@ -1114,19 +1116,21 @@ async function startServeBridge(
   startup: PreparedServeStartup,
   plan: ServeChannelPlan,
   channelActions: ChannelActions,
+  display: { tui?: boolean } = {},
 ): Promise<void> {
   const adapters = channelActions.createRuntimeAdapters();
   if (adapters.length === 0) {
     throw new Error("未发现可启动的渠道。请先运行 chat-codex，在“管理渠道”里添加并启用微信账号或飞书机器人。");
   }
-  const logger = new ConsoleLogger(false);
+  const runtimeLogs = display.tui ? new RuntimeLogStore() : undefined;
+  const logger = runtimeLogs ? new RuntimeTuiLogger(runtimeLogs) : new ConsoleLogger(false);
   const codex = createRealCodexAdapter(startup);
   const bridge = new Bridge({
     channels: new ChannelRegistry({ channels: adapters, logger }),
     codex,
     state: new FileStateStore(),
     logger,
-    transcript: new ConsoleTranscriptSink(),
+    transcript: runtimeLogs ? new RuntimeTuiTranscriptSink(runtimeLogs) : new ConsoleTranscriptSink(),
     cwd: startup.cwd,
     initialRouteBinding: plan.initialRouteBinding,
     unboundRoutePolicy: plan.unboundRoutePolicy,
@@ -1135,14 +1139,30 @@ async function startServeBridge(
   });
 
   await bridge.start();
-  printRuntimeSummary("多渠道 Codex 中间件", startup, { progressDisabled: true });
-  console.log(`- 已启动渠道: ${adapters.map((adapter) => adapter.id).join(", ")}`);
-  console.log(`- 新聊天策略: ${formatUnboundRoutePolicyForUser(plan.unboundRoutePolicy)}`);
-  if (plan.firstRouteBindingChoice) {
-    console.log(`- 首个微信私聊: ${formatFirstRoutePresetForUser(plan.firstRouteBindingChoice, plan.initialSessionId, plan.initialSessionTitle)}`);
+  try {
+    if (runtimeLogs) {
+      runtimeLogs.add("system", "Bridge", "多渠道 Codex 中间件已启动，正在等待微信 / 飞书消息。");
+      runtimeLogs.add("system", "渠道", adapters.map((adapter) => adapter.id).join(", "));
+      runtimeLogs.add("system", "退出", "按 q 或 Esc 停止服务。");
+      await runRuntimeLogTui({
+        title: "Chat Codex 运行日志",
+        channels: adapters.map((adapter) => adapter.id),
+        cwd: startup.cwd,
+        policy: startup.policy,
+        routePolicy: formatUnboundRoutePolicyForUser(plan.unboundRoutePolicy),
+      }, runtimeLogs);
+    } else {
+      printRuntimeSummary("多渠道 Codex 中间件", startup, { progressDisabled: true });
+      console.log(`- 已启动渠道: ${adapters.map((adapter) => adapter.id).join(", ")}`);
+      console.log(`- 新聊天策略: ${formatUnboundRoutePolicyForUser(plan.unboundRoutePolicy)}`);
+      if (plan.firstRouteBindingChoice) {
+        console.log(`- 首个微信私聊: ${formatFirstRoutePresetForUser(plan.firstRouteBindingChoice, plan.initialSessionId, plan.initialSessionTitle)}`);
+      }
+      await waitForShutdownSignal();
+    }
+  } finally {
+    await bridge.stop();
   }
-  await waitForShutdownSignal();
-  await bridge.stop();
 }
 
 async function askStdin(prompt: string): Promise<string> {

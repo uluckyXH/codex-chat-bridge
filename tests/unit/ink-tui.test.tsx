@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import React from "react";
 import { render } from "ink-testing-library";
 import { ChatCodexTui } from "../../src/cli/tui/app.js";
+import { RuntimeLogStore, RuntimeLogView, RuntimeTuiTranscriptSink } from "../../src/cli/tui/runtime-log.js";
 import type { LauncherActions, LauncherDashboard } from "../../src/cli/actions/launcher-actions.js";
 
 test("Ink TUI renders dashboard and navigates to core pages", async () => {
@@ -64,7 +65,9 @@ test("Ink TUI handles help, Feishu form back, and start confirmation", async () 
   await waitForInk();
   startView.stdin.write("\r");
   await waitForInk();
-  assert.match(startView.lastFrame() ?? "", /即将启动/);
+  assert.match(startView.lastFrame() ?? "", /启动服务/);
+  assert.match(startView.lastFrame() ?? "", /确认后会启动 Bridge，并进入运行日志面板/);
+  assert.match(startView.lastFrame() ?? "", /新聊天策略\s+首条消息自动创建新 session/);
   startView.stdin.write("\r");
   await waitForInk();
   assert.deepEqual(result, { start: true });
@@ -131,6 +134,46 @@ test("Ink TUI empty channel page exposes actionable add menu", async () => {
   view.unmount();
 });
 
+test("Runtime TUI renders startup summary and transcript logs", async () => {
+  const store = new RuntimeLogStore();
+  const sink = new RuntimeTuiTranscriptSink(store);
+  sink.inbound({
+    id: "message-1",
+    channelId: "feishu-default",
+    routeKey: "feishu-default:default:direct:oc_abc",
+    accountId: "default",
+    conversation: { kind: "direct", id: "oc_abc" },
+    sender: { id: "ou_abc", displayName: "张三" },
+    text: "你好",
+    timestamp: "2026-05-16T00:00:00.000Z",
+  }, "你好");
+  sink.outbound({
+    channelId: "feishu-default",
+    routeKey: "feishu-default:default:direct:oc_abc",
+    accountId: "default",
+    conversation: { kind: "direct", id: "oc_abc" },
+    recipient: { id: "ou_abc", displayName: "张三" },
+  }, "收到");
+
+  const view = render(<RuntimeLogView summary={{
+    title: "Chat Codex 运行日志",
+    channels: ["feishu-default"],
+    cwd: "/repo",
+    policy: { permissionMode: "approval", sandbox: "workspace-write" },
+    routePolicy: "首条消息自动创建新 session",
+  }} store={store} />);
+  await waitForInk();
+
+  assert.match(view.lastFrame() ?? "", /Chat Codex 运行日志/);
+  assert.match(view.lastFrame() ?? "", /运行中/);
+  assert.match(view.lastFrame() ?? "", /feishu-default/);
+  assert.match(view.lastFrame() ?? "", /收到/);
+  assert.match(view.lastFrame() ?? "", /发送/);
+  assert.match(view.lastFrame() ?? "", /你好/);
+
+  view.unmount();
+});
+
 function mockActions(dashboard: LauncherDashboard): LauncherActions {
   return {
     getDashboard: async () => dashboard,
@@ -151,12 +194,27 @@ function mockActions(dashboard: LauncherDashboard): LauncherActions {
     listSessionChoices: () => ({ selectable: [], unavailable: [] }),
     listWeixinPrimaryChoices: () => ({ selectable: [], unavailable: [] }),
     formatRunPolicy: () => "审批模式（workspace-write 沙箱）",
-    startConfirmationSummary: () => ["即将启动"],
+    startConfirmationSummary: () => [
+      "即将启动",
+      "",
+      "渠道",
+      "- 飞书 / default: 已连接",
+      "",
+      "聊天绑定",
+      "- 新聊天策略: 首条消息自动创建新 session",
+      "- 待生效绑定: 1",
+      "",
+      "权限",
+      "- 新 session 默认权限: 审批模式（workspace-write 沙箱）",
+      "",
+      "运行",
+      "- 新 session 工作目录: /repo",
+    ],
   } as unknown as LauncherActions;
 }
 
 function dashboardFixture(): LauncherDashboard {
-  return {
+  const dashboard: LauncherDashboard = {
     channels: [{
       record: {
         id: "feishu-default",
@@ -231,6 +289,12 @@ function dashboardFixture(): LauncherDashboard {
       message: "可以启动服务。",
     },
   };
+  dashboard.canStart = {
+    ok: true,
+    channels: dashboard.channels,
+    message: "可以启动服务。",
+  };
+  return dashboard;
 }
 
 function emptyDashboardFixture(): LauncherDashboard {

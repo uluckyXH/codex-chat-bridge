@@ -283,9 +283,20 @@ export function StatusView({ dashboard }: { dashboard: LauncherDashboard }): Rea
 }
 
 export function StartConfirmView({ validation, lines }: { validation: StartValidation; lines: string[] }): React.JSX.Element {
+  const groups = parseStartSummary(lines);
   return (
-    <Frame title="即将启动" subtitle={validation.ok ? "Enter 启动  Esc 返回" : "Esc 返回"}>
-      {lines.map((line, index) => <Text key={index}>{line}</Text>)}
+    <Frame title="启动服务" subtitle={validation.ok ? "Enter 启动  Esc 返回" : "Esc 返回"}>
+      <Section title={validation.ok ? "确认启动" : "需要处理"}>
+        <Text>{validation.ok ? "确认后会启动 Bridge，并进入运行日志面板。" : lines[0]}</Text>
+      </Section>
+      {validation.ok ? groups.map((group) => (
+        <Section key={group.title} title={group.title}>
+          {group.items.map((item) => {
+            const [label, value] = splitSummaryItem(item);
+            return value ? <KeyValue key={item} label={label} value={value} /> : <Text key={item}>- {item}</Text>;
+          })}
+        </Section>
+      )) : null}
     </Frame>
   );
 }
@@ -318,4 +329,30 @@ function defaultForFeishuStep(step: Extract<Screen, { name: "addFeishu" }>["step
   if (step === "domain") return "feishu";
   if (step === "accountId") return "default";
   return "";
+}
+
+function parseStartSummary(lines: string[]): Array<{ title: string; items: string[] }> {
+  const groups: Array<{ title: string; items: string[] }> = [];
+  let current: { title: string; items: string[] } | undefined;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line || line === "即将启动") continue;
+    if (!line.startsWith("- ")) {
+      current = { title: line, items: [] };
+      groups.push(current);
+      continue;
+    }
+    if (!current) {
+      current = { title: "摘要", items: [] };
+      groups.push(current);
+    }
+    current.items.push(line.slice(2));
+  }
+  return groups;
+}
+
+function splitSummaryItem(item: string): [string, string | undefined] {
+  const index = item.indexOf(": ");
+  if (index < 0) return [item, undefined];
+  return [item.slice(0, index), item.slice(index + 2)];
 }

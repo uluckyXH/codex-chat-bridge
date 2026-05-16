@@ -4,7 +4,7 @@ import type { CodexRunPolicy } from "../../codex/codex-cli.js";
 import type { SelectableSessionChoice, SessionDisplay } from "../actions/binding-actions.js";
 import type { Flash, Screen } from "./types.js";
 
-const FIELD_WIDTH = 18;
+const FIELD_WIDTH = 22;
 
 export function Frame({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -41,7 +41,7 @@ export function SessionRow({ active, index, session }: { active: boolean; index:
 }
 
 export function KeyValue({ label, value }: { label: string; value: string }): React.JSX.Element {
-  return <Text>{padRight(label, FIELD_WIDTH)}{truncate(value, 70)}</Text>;
+  return <Text>{padRight(truncate(label, FIELD_WIDTH), FIELD_WIDTH)}  {truncate(value, 66)}</Text>;
 }
 
 export function Footer({ loading, flash, screen, context }: { loading: boolean; flash: Flash; screen: Screen["name"]; context?: "firstRun" | "emptyChannels" }): React.JSX.Element {
@@ -99,6 +99,7 @@ function footerHint(screen: Screen["name"], context?: "firstRun" | "emptyChannel
   if (screen === "addFeishu") return "输入后 Enter 下一步  Secret 不回显  Esc 返回";
   if (screen === "sessionSelect") return "↑↓ 选择  Enter 绑定  数字直选  n 新建  m 手动输入  Esc 返回";
   if (screen === "permission") return "↑↓ 选择  Enter 保存  完全权限需确认  Esc 返回";
+  if (screen === "startConfirm") return "Enter 启动服务  Esc 返回  q 返回";
   return "↑↓ 选择  Enter 执行  Esc 返回  q 返回";
 }
 

@@ -467,15 +467,16 @@ Session 选择页快捷键：
 
 第一版启动后行为：
 
-- TUI 退出配置界面。
-- Bridge 按现有方式启动。
-- 运行期 transcript 继续使用当前 `ConsoleTranscriptSink` 打印。
-- Ctrl+C 停止服务。
+- TUI 退出配置界面后启动 Bridge。
+- TTY 默认进入运行期日志面板，展示已启动渠道、工作目录、默认权限、新聊天策略和最近 transcript。
+- 运行期日志面板显示收到消息、发送回复、本地进度和媒体发送。
+- `q` / `Esc` 停止服务并退出。
+- `--no-tui` 或非 TTY fallback 继续使用当前 `ConsoleTranscriptSink` 打印。
 
 后续增强：
 
-- 可以新增运行期 TUI 页面，左侧显示渠道和任务状态，右侧显示最近 transcript。
-- 运行期 TUI 不是第一版阻塞项。
+- 运行期 TUI 可以继续增强为左右两栏：左侧显示渠道和任务状态，右侧显示最近 transcript。
+- 后续补充滚动、过滤、暂停跟随、审批状态和队列状态。
 
 ## 错误处理
 
@@ -526,7 +527,8 @@ npm run chat-codex
 - 窄终端和宽终端都不出现重叠。
 - 中文宽字符对齐可接受。
 - App Secret 输入不回显。
-- 启动服务后 transcript 正常打印。
+- 启动服务后 TTY 默认进入运行期日志面板，收到/发送/进度日志能追加显示。
+- `--no-tui` 下 transcript 正常打印。
 - 非 TTY fallback 不受影响。
 
 ## 实施顺序
@@ -554,11 +556,11 @@ npm run chat-codex
 ### T4：启动确认和运行衔接
 
 - TUI 启动确认页。
-- 启动后退出 TUI 配置界面，进入现有 Bridge runtime transcript。
+- 启动后退出 TUI 配置界面，进入运行期日志面板。
 - 完整回归测试和真实人工验证。
 
 ### T5：运行期 TUI 可选增强
 
-- 最近 transcript 面板。
 - 当前运行任务、队列和审批状态。
 - 渠道健康状态实时刷新。
+- 日志滚动、过滤、暂停跟随和全文查看。

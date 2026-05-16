@@ -9,8 +9,8 @@ export async function runChatCodexTui(actions: LauncherActions): Promise<ChatCod
   const instance = render(
     <ChatCodexTui
       actions={actions}
-      onDone={(result) => {
-        result = result;
+      onDone={(nextResult) => {
+        result = nextResult;
       }}
     />,
   );

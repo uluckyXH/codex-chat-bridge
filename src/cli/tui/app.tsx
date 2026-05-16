@@ -100,6 +100,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     const validation = dashboard?.canStart;
     if (!validation || validation.ok) {
       setScreen({ name: "startConfirm" });
+      setFlash({ kind: "info", message: "确认无误后按 Enter 启动服务；Esc 返回修改配置。" });
       return;
     }
     if (validation.reason === "no_enabled_channels") {
