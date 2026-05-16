@@ -22,18 +22,22 @@ A lightweight chat middleware that connects local Codex to Weixin and Feishu.
 <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
 
-## Table of Contents
+<p align="center">
+<strong>Contents</strong>
+</p>
 
-- [Overview](#overview)
-- [Capabilities](#capabilities)
-- [Tech Stack](#tech-stack)
-- [Development Quick Start](#development-quick-start)
-- [Development Commands](#development-commands)
-- [Architecture](#architecture)
-- [Chat Commands](#chat-commands)
-- [File Sending](#file-sending)
-- [Documentation](#documentation)
-- [License](#license)
+<p align="center">
+<a href="#overview">Overview</a> ·
+<a href="#capabilities">Capabilities</a> ·
+<a href="#tech-stack">Tech Stack</a> ·
+<a href="#development-quick-start">Quick Start</a> ·
+<a href="#development-commands">Commands</a> ·
+<a href="#architecture">Architecture</a> ·
+<a href="#chat-commands">Chat Commands</a> ·
+<a href="#file-sending">File Sending</a> ·
+<a href="#documentation">Docs</a> ·
+<a href="#license">License</a>
+</p>
 
 ## Overview
 
