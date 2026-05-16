@@ -8,50 +8,56 @@ import { RuntimeLogStore, RuntimeLogView, RuntimeTuiTranscriptSink } from "../..
 import { runRuntimeLogTui } from "../../src/cli/tui/run-runtime-log.js";
 import type { LauncherActions, LauncherDashboard } from "../../src/cli/actions/launcher-actions.js";
 
+const ANSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+
+function cleanFrame(view: { lastFrame(): string | undefined }): string {
+  return (view.lastFrame() ?? "").replace(ANSI_PATTERN, "");
+}
+
 test("Ink TUI renders dashboard and navigates to core pages", async () => {
   const actions = mockActions(dashboardFixture());
   const view = render(<ChatCodexTui actions={actions} onDone={() => undefined} />);
   await waitForInk();
 
-  assert.match(view.lastFrame() ?? "", /Chat Codex/);
-  assert.match(view.lastFrame() ?? "", /启动服务/);
-  assert.match(view.lastFrame() ?? "", /已准备好。按 Enter 启动 Bridge，并进入运行日志面板/);
-  assert.match(view.lastFrame() ?? "", /渠道/);
-  assert.match(view.lastFrame() ?? "", /聊天绑定/);
-  assert.match(view.lastFrame() ?? "", /权限/);
-  assert.match(view.lastFrame() ?? "", /工作目录/);
-  assert.match(view.lastFrame() ?? "", /\/repo/);
+  assert.match(cleanFrame(view), /Chat Codex/);
+  assert.match(cleanFrame(view), /启动服务/);
+  assert.match(cleanFrame(view), /已准备好。按 Enter 启动 Bridge，并进入运行日志面板/);
+  assert.match(cleanFrame(view), /渠道/);
+  assert.match(cleanFrame(view), /聊天绑定/);
+  assert.match(cleanFrame(view), /权限/);
+  assert.match(cleanFrame(view), /工作目录/);
+  assert.match(cleanFrame(view), /\/repo/);
 
   view.stdin.write("c");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /管理渠道/);
-  assert.match(view.lastFrame() ?? "", /2\. 添加微信账号/);
-  assert.match(view.lastFrame() ?? "", /3\. 添加飞书机器人/);
-  assert.match(view.lastFrame() ?? "", /w 微信/);
-  assert.match(view.lastFrame() ?? "", /f 飞书/);
+  assert.match(cleanFrame(view), /管理渠道/);
+  assert.match(cleanFrame(view), /2\. 添加微信账号/);
+  assert.match(cleanFrame(view), /3\. 添加飞书机器人/);
+  assert.match(cleanFrame(view), /w 微信/);
+  assert.match(cleanFrame(view), /f 飞书/);
 
   view.stdin.write("\u001B");
   await waitForInk();
   view.stdin.write("b");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /聊天绑定/);
-  assert.match(view.lastFrame() ?? "", /飞书 \/ default \/ 张三/);
-  assert.match(view.lastFrame() ?? "", /微信 \/ wx-main \/ 主聊天/);
-  assert.match(view.lastFrame() ?? "", /待生效/);
+  assert.match(cleanFrame(view), /聊天绑定/);
+  assert.match(cleanFrame(view), /飞书 \/ default \/ 张三/);
+  assert.match(cleanFrame(view), /微信 \/ wx-main \/ 主聊天/);
+  assert.match(cleanFrame(view), /待生效/);
 
   view.stdin.write("\u001B");
   await waitForInk();
   view.stdin.write("p");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /默认权限设置/);
-  assert.match(view.lastFrame() ?? "", /审批模式/);
+  assert.match(cleanFrame(view), /默认权限设置/);
+  assert.match(cleanFrame(view), /审批模式/);
 
   view.stdin.write("\u001B");
   await waitForInk();
   view.stdin.write("d");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /工作目录/);
-  assert.match(view.lastFrame() ?? "", /当前终端目录/);
+  assert.match(cleanFrame(view), /工作目录/);
+  assert.match(cleanFrame(view), /当前终端目录/);
 
   view.unmount();
 });
@@ -63,16 +69,16 @@ test("Ink TUI handles help, Feishu form back, and start confirmation", async () 
 
   view.stdin.write("?");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /快捷键/);
+  assert.match(cleanFrame(view), /快捷键/);
 
   view.stdin.write("\r");
   await waitForInk();
   view.stdin.write("f");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /添加飞书机器人/);
+  assert.match(cleanFrame(view), /添加飞书机器人/);
   view.stdin.write("\u001B");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /管理渠道/);
+  assert.match(cleanFrame(view), /管理渠道/);
 
   view.unmount();
 
@@ -80,9 +86,9 @@ test("Ink TUI handles help, Feishu form back, and start confirmation", async () 
   await waitForInk();
   startView.stdin.write("\r");
   await waitForInk();
-  assert.match(startView.lastFrame() ?? "", /启动服务/);
-  assert.match(startView.lastFrame() ?? "", /确认后会启动 Bridge，并进入 Chat Codex 运行中面板/);
-  assert.match(startView.lastFrame() ?? "", /新聊天策略\s+首条消息自动创建新 session/);
+  assert.match(cleanFrame(startView), /启动服务/);
+  assert.match(cleanFrame(startView), /确认后会启动 Bridge，并进入 Chat Codex 运行中面板/);
+  assert.match(cleanFrame(startView), /新聊天策略\s+首条消息自动创建新 session/);
   startView.stdin.write("\r");
   await waitForInk();
   assert.deepEqual(result, { start: true });
@@ -95,18 +101,18 @@ test("Ink TUI exposes add channel actions when channels already exist", async ()
 
   view.stdin.write("c");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /已配置渠道/);
-  assert.match(view.lastFrame() ?? "", /2\. 添加微信账号/);
-  assert.match(view.lastFrame() ?? "", /3\. 添加飞书机器人/);
-  assert.match(view.lastFrame() ?? "", /4\. 修改选中渠道备注/);
-  assert.match(view.lastFrame() ?? "", /6\. 删除选中渠道/);
+  assert.match(cleanFrame(view), /已配置渠道/);
+  assert.match(cleanFrame(view), /2\. 添加微信账号/);
+  assert.match(cleanFrame(view), /3\. 添加飞书机器人/);
+  assert.match(cleanFrame(view), /4\. 修改选中渠道备注/);
+  assert.match(cleanFrame(view), /6\. 删除选中渠道/);
 
   view.stdin.write("\u001B[B");
   view.stdin.write("\u001B[B");
   await waitForInk();
   view.stdin.write("\r");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /添加飞书机器人/);
+  assert.match(cleanFrame(view), /添加飞书机器人/);
 
   view.unmount();
 });
@@ -136,22 +142,22 @@ test("Ink TUI requires Feishu account label and submits with default domain", as
 
   view.stdin.write("2");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /FEISHU_APP_ID/);
+  assert.match(cleanFrame(view), /FEISHU_APP_ID/);
   view.stdin.write("cli_test");
   await waitForInk();
   view.stdin.write("\r");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /FEISHU_APP_SECRET/);
+  assert.match(cleanFrame(view), /FEISHU_APP_SECRET/);
   view.stdin.write("secret");
   await waitForInk();
   view.stdin.write("\r");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /账号标识/);
+  assert.match(cleanFrame(view), /账号标识/);
 
   view.stdin.write("\r");
   await waitForInk();
   assert.equal(submitted.length, 0);
-  assert.match(view.lastFrame() ?? "", /这里不能为空/);
+  assert.match(cleanFrame(view), /这里不能为空/);
 
   view.stdin.write("dalongxia");
   await waitForInk();
@@ -172,24 +178,24 @@ test("Ink TUI first run guides user to add channels with Enter and number shortc
   const view = render(<ChatCodexTui actions={mockActions(emptyDashboardFixture())} onDone={() => undefined} />);
   await waitForInk();
 
-  assert.match(view.lastFrame() ?? "", /首次配置/);
-  assert.match(view.lastFrame() ?? "", /1\. 添加微信账号/);
-  assert.match(view.lastFrame() ?? "", /2\. 添加飞书机器人/);
-  assert.match(view.lastFrame() ?? "", /4\. 工作目录/);
-  assert.match(view.lastFrame() ?? "", /↑↓ 选择/);
-  assert.match(view.lastFrame() ?? "", /0\/q 退出/);
+  assert.match(cleanFrame(view), /首次配置/);
+  assert.match(cleanFrame(view), /1\. 添加微信账号/);
+  assert.match(cleanFrame(view), /2\. 添加飞书机器人/);
+  assert.match(cleanFrame(view), /4\. 工作目录/);
+  assert.match(cleanFrame(view), /↑↓ 选择/);
+  assert.match(cleanFrame(view), /0\/q 退出/);
 
   view.stdin.write("\r");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /添加微信账号/);
-  assert.match(view.lastFrame() ?? "", /请使用微信扫码/);
-  assert.match(view.lastFrame() ?? "", /QR-CODE/);
+  assert.match(cleanFrame(view), /添加微信账号/);
+  assert.match(cleanFrame(view), /请使用微信扫码/);
+  assert.match(cleanFrame(view), /QR-CODE/);
 
   view.stdin.write("\u001B");
   await waitForInk();
   view.stdin.write("2");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /添加飞书机器人/);
+  assert.match(cleanFrame(view), /添加飞书机器人/);
 
   view.unmount();
 });
@@ -218,24 +224,24 @@ test("Ink TUI updates new session workdir from current directory and manual inpu
 
   view.stdin.write("d");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /当前新 session\s+\/repo/);
-  assert.match(view.lastFrame() ?? "", /当前终端目录\s+\/terminal\/repo/);
+  assert.match(cleanFrame(view), /当前新 session\s+\/repo/);
+  assert.match(cleanFrame(view), /当前终端目录\s+\/terminal\/repo/);
 
   view.stdin.write("\r");
   await waitForInk();
   assert.equal(dashboard.startup.cwd, "/terminal/repo");
-  assert.match(view.lastFrame() ?? "", /\/terminal\/repo/);
+  assert.match(cleanFrame(view), /\/terminal\/repo/);
 
   view.stdin.write("m");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /输入工作目录/);
+  assert.match(cleanFrame(view), /输入工作目录/);
 
   view.stdin.write("/tmp/manual-repo");
   await waitForInk();
   view.stdin.write("\r");
   await waitForInk();
   assert.equal(dashboard.startup.cwd, "/tmp/manual-repo");
-  assert.match(view.lastFrame() ?? "", /\/tmp\/manual-repo/);
+  assert.match(cleanFrame(view), /\/tmp\/manual-repo/);
 
   view.unmount();
 });
@@ -246,15 +252,15 @@ test("Ink TUI empty channel page exposes actionable add menu", async () => {
 
   view.stdin.write("c");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /管理渠道/);
-  assert.match(view.lastFrame() ?? "", /1\. 添加微信账号/);
-  assert.match(view.lastFrame() ?? "", /2\. 添加飞书机器人/);
+  assert.match(cleanFrame(view), /管理渠道/);
+  assert.match(cleanFrame(view), /1\. 添加微信账号/);
+  assert.match(cleanFrame(view), /2\. 添加飞书机器人/);
 
   view.stdin.write("\u001B[B");
   await waitForInk();
   view.stdin.write("\r");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /添加飞书机器人/);
+  assert.match(cleanFrame(view), /添加飞书机器人/);
 
   view.unmount();
 });
@@ -289,15 +295,15 @@ test("Runtime TUI renders startup summary and transcript logs", async () => {
   }} store={store} />);
   await waitForInk();
 
-  assert.match(view.lastFrame() ?? "", /Chat Codex 运行中/);
-  assert.match(view.lastFrame() ?? "", /已启动\s+Ctrl\+C 停止/);
-  assert.match(view.lastFrame() ?? "", /Chat Codex 已启动/);
-  assert.match(view.lastFrame() ?? "", /feishu-default/);
-  assert.match(view.lastFrame() ?? "", /收到/);
-  assert.match(view.lastFrame() ?? "", /发送/);
-  assert.match(view.lastFrame() ?? "", /你好/);
-  assert.match(view.lastFrame() ?? "", /Ctrl\+C 停止服务/);
-  assert.doesNotMatch(view.lastFrame() ?? "", /q\/Esc 停止/);
+  assert.match(cleanFrame(view), /Chat Codex 运行中/);
+  assert.match(cleanFrame(view), /已启动\s+Ctrl\+C 停止/);
+  assert.match(cleanFrame(view), /Chat Codex 已启动/);
+  assert.match(cleanFrame(view), /feishu-default/);
+  assert.match(cleanFrame(view), /收到/);
+  assert.match(cleanFrame(view), /发送/);
+  assert.match(cleanFrame(view), /你好/);
+  assert.match(cleanFrame(view), /Ctrl\+C 停止服务/);
+  assert.doesNotMatch(cleanFrame(view), /q\/Esc 停止/);
 
   view.unmount();
 });
@@ -317,12 +323,12 @@ test("Ink TUI shows session last active time in binding views", async () => {
 
   view.stdin.write("b");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /最近 05-16/);
+  assert.match(cleanFrame(view), /最近 05-16/);
 
   view.stdin.write("\r");
   await waitForInk();
-  assert.match(view.lastFrame() ?? "", /最近活跃/);
-  assert.match(view.lastFrame() ?? "", /活跃会话/);
+  assert.match(cleanFrame(view), /最近活跃/);
+  assert.match(cleanFrame(view), /活跃会话/);
 
   view.unmount();
 });
@@ -349,8 +355,8 @@ test("Runtime TUI keeps full log messages and caps store at 300 entries", async 
   }} store={displayStore} />);
   await waitForInk();
 
-  assert.match(view.lastFrame() ?? "", /full-log-message-tail/);
-  assert.doesNotMatch(view.lastFrame() ?? "", /full-log-message-tai…/);
+  assert.match(cleanFrame(view), /full-log-message-tail/);
+  assert.doesNotMatch(cleanFrame(view), /full-log-message-tai…/);
 
   view.stdin.write("c");
   await waitForInk();
