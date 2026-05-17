@@ -20,11 +20,14 @@ import {
   KeyValue,
   ListRow,
   Muted,
+  ScrollHint,
   Section,
   SessionRow,
   statusColor,
   THEME,
   truncate,
+  useViewportRows,
+  visibleWindow,
 } from "./ui-components.js";
 
 export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard; selected: number }): React.JSX.Element {
@@ -108,6 +111,8 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
 }
 
 export function ChannelsView({ channels, selected, channelCursor = 0 }: { channels: LauncherDashboard["channels"]; selected: number; channelCursor?: number }): React.JSX.Element {
+  // fixed: Frame(4) + "已配置渠道" section(3) + "操作" section(3) + 7 actions + footer(2) = 19
+  const channelViewport = useViewportRows(19);
   if (channels.length === 0) {
     const actions = [
       ["1. 添加微信账号", "扫码登录微信"],
@@ -134,18 +139,25 @@ export function ChannelsView({ channels, selected, channelCursor = 0 }: { channe
     ["查看选中渠道详情", targetName],
     ["返回首页", "回到启动页"],
   ];
+  const channelSelected = selected < actionOffset ? selected : actionOffset - 1;
+  const cw = visibleWindow(channels, channelSelected, channelViewport);
   return (
     <Frame title="管理渠道" subtitle="Enter 执行  w 微信  f 飞书  e 启停">
       <Section title="已配置渠道">
-        {channels.map((channel, index) => (
-          <ListRow
-            key={channel.record.id}
-            active={selected === index}
-            left={`${index + 1}. ${formatManagedChannelLabel(channel)}`}
-            right={`${channel.record.enabled ? "已启用" : "已停用"}   ${channelStatus(channel.status.state)}   添加 ${formatShortDateTime(channel.record.createdAt)}`}
-            tone={channel.status.state === "connected" ? "success" : channel.status.state === "failed" ? "danger" : channel.status.state === "login_required" ? "warning" : undefined}
-          />
-        ))}
+        <ScrollHint above={cw.above} below={0} />
+        {cw.slice.map((channel, i) => {
+          const index = cw.startIndex + i;
+          return (
+            <ListRow
+              key={channel.record.id}
+              active={selected === index}
+              left={`${index + 1}. ${formatManagedChannelLabel(channel)}`}
+              right={`${channel.record.enabled ? "已启用" : "已停用"}   ${channelStatus(channel.status.state)}   添加 ${formatShortDateTime(channel.record.createdAt)}`}
+              tone={channel.status.state === "connected" ? "success" : channel.status.state === "failed" ? "danger" : channel.status.state === "login_required" ? "warning" : undefined}
+            />
+          );
+        })}
+        <ScrollHint above={0} below={cw.below} />
       </Section>
       <Section title="操作">
         {actions.map(([label, value], index) => (
@@ -238,14 +250,22 @@ export function AddFeishuView({ screen, onSubmit }: { screen: Extract<Screen, { 
 }
 
 export function WeixinBindingView({ channel, choices, selected }: { channel?: ChannelInstanceRecord; choices?: SessionChoices; selected: number }): React.JSX.Element {
+  // fixed: Frame(4) + 2 KeyValues(2) + section header(3) + footer(2) = 11
+  const viewportRows = useViewportRows(11);
+  const selectable = choices?.selectable ?? [];
+  const sw = visibleWindow(selectable, selected, viewportRows);
   return (
     <Frame title="微信主聊天绑定" subtitle="Enter 绑定  n 新建  m 手动输入  0 暂不绑定">
       {channel ? <KeyValue label="渠道实例" value={channel.id} /> : <Muted text="这个微信渠道已经不存在。" />}
       {channel?.defaultAccountId ? <KeyValue label="账号" value={channel.defaultAccountId} /> : null}
       <Section title="可选 session">
-        {choices?.selectable.length
-          ? choices.selectable.map((item, index) => <SessionRow key={item.id} index={index} active={selected === index} session={item} />)
-          : <Muted text="暂无可选历史 session。" />}
+        {selectable.length ? (
+          <>
+            <ScrollHint above={sw.above} below={0} />
+            {sw.slice.map((item, i) => <SessionRow key={item.id} index={sw.startIndex + i} active={selected === sw.startIndex + i} session={item} />)}
+            <ScrollHint above={0} below={sw.below} />
+          </>
+        ) : <Muted text="暂无可选历史 session。" />}
       </Section>
       {choices?.unavailable.length ? (
         <Section title="不可选（已绑定其他聊天）">
@@ -257,24 +277,26 @@ export function WeixinBindingView({ channel, choices, selected }: { channel?: Ch
 }
 
 export function BindingsView({ bindings, pendingBindings, selected }: { bindings: BindingSummary[]; pendingBindings: PendingBindingRecord[]; selected: number }): React.JSX.Element {
+  // fixed: Frame(4) + footer(2) + padding(2) = 8
+  const viewportRows = useViewportRows(8);
+  const allItems = [
+    ...bindings.map((b, i) => ({ key: b.route.routeKey, label: `${i + 1}. ${b.label}`, right: b.activeSession ? formatSessionWithActivity(b.activeSession) : "未绑定" })),
+    ...pendingBindings.map((p, i) => ({ key: p.id, label: `${bindings.length + i + 1}. ${p.label ?? p.id}`, right: p.binding.type === "existing" ? `待生效: ${p.binding.sessionId.slice(0, 8)}` : "待生效: 新 session" })),
+  ];
+  const bw = visibleWindow(allItems, selected, viewportRows);
   return (
     <Frame title="聊天绑定" subtitle="Enter 详情  n 新建  m 手动绑定  u 解绑  p 权限">
-      {bindings.length === 0 && pendingBindings.length === 0 ? <Muted text="还没有发现任何聊天。启动服务后，微信私聊或飞书用户私聊机器人会自动记录在这里。" /> : bindings.map((binding, index) => (
-        <ListRow
-          key={binding.route.routeKey}
-          active={selected === index}
-          left={`${index + 1}. ${binding.label}`}
-          right={binding.activeSession ? formatSessionWithActivity(binding.activeSession) : "未绑定"}
-        />
-      ))}
-      {pendingBindings.map((pending, index) => (
-        <ListRow
-          key={pending.id}
-          active={selected === bindings.length + index}
-          left={`${bindings.length + index + 1}. ${pending.label ?? pending.id}`}
-          right={pending.binding.type === "existing" ? `待生效: ${pending.binding.sessionId.slice(0, 8)}` : "待生效: 新 session"}
-        />
-      ))}
+      {allItems.length === 0
+        ? <Muted text="还没有发现任何聊天。启动服务后，微信私聊或飞书用户私聊机器人会自动记录在这里。" />
+        : (
+          <>
+            <ScrollHint above={bw.above} below={0} />
+            {bw.slice.map((item, i) => (
+              <ListRow key={item.key} active={selected === bw.startIndex + i} left={item.label} right={item.right} />
+            ))}
+            <ScrollHint above={0} below={bw.below} />
+          </>
+        )}
     </Frame>
   );
 }
@@ -303,13 +325,20 @@ export function BindingDetailView({ binding, selected }: { binding?: BindingSumm
 }
 
 export function SessionSelectView({ choices, selected, binding }: { target: SessionTarget; choices: SessionChoices; selected: number; binding?: BindingSummary }): React.JSX.Element {
+  // fixed: Frame(4) + KeyValue binding(1) + section header(3) + footer(2) = 10
+  const viewportRows = useViewportRows(10);
+  const ssw = visibleWindow(choices.selectable, selected, viewportRows);
   return (
     <Frame title="选择 Codex session" subtitle="Enter 绑定  数字选择  n 新建  m 手动输入">
       {binding ? <KeyValue label="聊天" value={binding.label} /> : null}
       <Section title="可选">
-        {choices.selectable.length
-          ? choices.selectable.map((item, index) => <SessionRow key={item.id} index={index} active={selected === index} session={item} />)
-          : <Muted text="暂无可选历史 session。" />}
+        {choices.selectable.length ? (
+          <>
+            <ScrollHint above={ssw.above} below={0} />
+            {ssw.slice.map((item, i) => <SessionRow key={item.id} index={ssw.startIndex + i} active={selected === ssw.startIndex + i} session={item} />)}
+            <ScrollHint above={0} below={ssw.below} />
+          </>
+        ) : <Muted text="暂无可选历史 session。" />}
       </Section>
       {choices.unavailable.length ? (
         <Section title="不可选">

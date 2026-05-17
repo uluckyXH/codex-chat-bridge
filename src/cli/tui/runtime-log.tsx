@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useWindowSize } from "ink";
 import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../../protocol/channel.js";
 import type { TranscriptSink } from "../../logging/transcript.js";
 import type { Logger } from "../../logging/logger.js";
@@ -107,7 +107,9 @@ export function RuntimeLogView({ summary, store, interactive = true }: { summary
   const [logs, setLogs] = useState<RuntimeLogEntry[]>(store.snapshot());
   const [scrollOffset, setScrollOffset] = useState(0);
   useEffect(() => store.subscribe(() => setLogs(store.snapshot())), [store]);
-  const visibleCount = 12;
+  // fixed: Frame(4) + "运行状态" section(3) + status line(1) + "服务" section(3) + 6 KeyValues(6) + "日志" section(3) + footer(2) = 22
+  const { rows } = useWindowSize();
+  const visibleCount = Math.max(5, rows - 22);
   useInput((input, key) => {
     const maxScroll = Math.max(0, logs.length - visibleCount);
     const pageKey = key as typeof key & { pageUp?: boolean; pageDown?: boolean; end?: boolean };

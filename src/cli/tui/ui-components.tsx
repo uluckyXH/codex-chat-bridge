@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useStdout, useWindowSize } from "ink";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
 import type { SelectableSessionChoice, SessionDisplay } from "../actions/binding-actions.js";
 import { formatSessionActiveTime } from "../actions/binding-actions.js";
@@ -279,5 +279,42 @@ function isFullwidth(code: number): boolean {
     || (code >= 0xffe0 && code <= 0xffe6)
     || (code >= 0x1f300 && code <= 0x1f64f)
     || (code >= 0x1f900 && code <= 0x1f9ff)
+  );
+}
+
+// ─── Height adaptation ────────────────────────────────────────────────────────
+
+/** Returns the number of rows available for a list section, given how many rows
+ *  are consumed by fixed chrome (Frame border, Section headers, Footer, etc.). */
+export function useViewportRows(fixedRows: number): number {
+  const { rows } = useWindowSize();
+  return Math.max(3, rows - fixedRows);
+}
+
+export interface VisibleWindow<T> {
+  slice: T[];
+  startIndex: number;
+  above: number;
+  below: number;
+}
+
+/** Compute the visible slice of `items` centred around `selected`, capped at `maxVisible`. */
+export function visibleWindow<T>(items: T[], selected: number, maxVisible: number): VisibleWindow<T> {
+  if (items.length <= maxVisible) {
+    return { slice: items, startIndex: 0, above: 0, below: 0 };
+  }
+  let start = Math.max(0, selected - Math.floor(maxVisible / 2));
+  start = Math.min(start, items.length - maxVisible);
+  const slice = items.slice(start, start + maxVisible);
+  return { slice, startIndex: start, above: start, below: items.length - (start + maxVisible) };
+}
+
+export function ScrollHint({ above, below }: { above: number; below: number }): React.JSX.Element | null {
+  if (above === 0 && below === 0) return null;
+  return (
+    <Box flexDirection="column">
+      {above > 0 ? <Text color={THEME.muted}>  ↑ 还有 {above} 项</Text> : null}
+      {below > 0 ? <Text color={THEME.muted}>  ↓ 还有 {below} 项</Text> : null}
+    </Box>
   );
 }
