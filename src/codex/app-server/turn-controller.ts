@@ -1,0 +1,349 @@
+import type { CodexBackgroundEventHandler, CodexEvent, CodexProgressKind } from "../types.js";
+import {
+  appServerErrorMessage,
+  isTransientAppServerError,
+  messagePhaseValue,
+  progressFromThreadItem,
+  shouldFlushProgressDraft,
+  textFromPlan,
+} from "./notification-mapper.js";
+import { withContext } from "./session-status.js";
+import { AsyncEventQueue, createTurnQueueRecord, shouldCreateBackgroundTurn } from "./turn-store.js";
+import type { AppServerSessionRecord, JsonRpcNotification, TurnQueueRecord } from "./types.js";
+import { arrayValue, objectValue, stringValue } from "./value-parsers.js";
+import { parseTokenUsage } from "./model-policy.js";
+
+export interface AppServerTurnControllerOptions {
+  sessions: Map<string, AppServerSessionRecord>;
+  threadToSession: Map<string, string>;
+}
+
+export class AppServerTurnController {
+  private readonly sessions: Map<string, AppServerSessionRecord>;
+  private readonly threadToSession: Map<string, string>;
+  private readonly turnQueues = new Map<string, TurnQueueRecord>();
+  private readonly earlyTurnEvents = new Map<string, CodexEvent[]>();
+  private readonly closedTurnIds = new Set<string>();
+  private readonly backgroundHandlers = new Set<CodexBackgroundEventHandler>();
+
+  constructor(options: AppServerTurnControllerOptions) {
+    this.sessions = options.sessions;
+    this.threadToSession = options.threadToSession;
+  }
+
+  onBackgroundEvent(handler: CodexBackgroundEventHandler): () => void {
+    this.backgroundHandlers.add(handler);
+    return () => {
+      this.backgroundHandlers.delete(handler);
+    };
+  }
+
+  registerTurn(
+    sessionId: string,
+    turnId: string,
+    queue: AsyncEventQueue<CodexEvent>,
+    collaborationMode?: TurnQueueRecord["collaborationMode"],
+  ): void {
+    this.closedTurnIds.delete(turnId);
+    this.turnQueues.set(turnId, createTurnQueueRecord(sessionId, turnId, queue, collaborationMode));
+    for (const event of this.earlyTurnEvents.get(turnId) ?? []) {
+      queue.push(event);
+    }
+    this.earlyTurnEvents.delete(turnId);
+  }
+
+  get(turnId: string): TurnQueueRecord | undefined {
+    return this.turnQueues.get(turnId);
+  }
+
+  pushTurnEvent(turnId: string, event: CodexEvent): void {
+    if (this.closedTurnIds.has(turnId)) return;
+    const turn = this.turnQueues.get(turnId);
+    if (turn && !turn.closed) {
+      turn.queue.push(event);
+      return;
+    }
+    const early = this.earlyTurnEvents.get(turnId) ?? [];
+    early.push(event);
+    this.earlyTurnEvents.set(turnId, early);
+  }
+
+  createBackgroundTurn(sessionId: string, turnId: string): TurnQueueRecord | undefined {
+    if (this.closedTurnIds.has(turnId)) return undefined;
+    const existing = this.turnQueues.get(turnId);
+    if (existing) return existing;
+    const stored = this.sessions.get(sessionId);
+    if (!stored) return undefined;
+    const queue = new AsyncEventQueue<CodexEvent>();
+    const turn = createTurnQueueRecord(sessionId, turnId, queue);
+    this.turnQueues.set(turnId, turn);
+    stored.status = withContext(stored, { type: "running", turnId });
+    stored.currentTurnId = turnId;
+    stored.updatedAt = new Date().toISOString();
+    void this.drainBackgroundTurn(queue);
+    queue.push({ type: "turn.started", sessionId, turnId });
+    return turn;
+  }
+
+  closeTurn(turnId: string, status: "idle" | "failed", error?: string): void {
+    const turn = this.turnQueues.get(turnId);
+    if (!turn || turn.closed) return;
+    turn.closed = true;
+    const stored = this.sessions.get(turn.sessionId);
+    if (stored) {
+      stored.status = status === "failed" && error ? withContext(stored, { type: "failed", error }) : withContext(stored, { type: "idle" });
+      stored.currentTurnId = undefined;
+      stored.updatedAt = new Date().toISOString();
+    }
+    turn.queue.close();
+    this.turnQueues.delete(turnId);
+    this.closedTurnIds.add(turnId);
+  }
+
+  closeAll(): void {
+    for (const turn of this.turnQueues.values()) {
+      turn.queue.close();
+    }
+    this.turnQueues.clear();
+    this.closedTurnIds.clear();
+  }
+
+  failAll(error: Error): void {
+    for (const turn of this.turnQueues.values()) {
+      turn.queue.push({ type: "turn.failed", sessionId: turn.sessionId, turnId: turn.turnId, error: error.message });
+      turn.queue.close();
+    }
+    this.turnQueues.clear();
+    this.closedTurnIds.clear();
+  }
+
+  handleNotification(notification: JsonRpcNotification): void {
+    const params = objectValue(notification.params);
+    const threadId = stringValue(params.threadId);
+    const turnId = stringValue(params.turnId) ?? stringValue(objectValue(params.turn).id);
+    if (!turnId) return;
+    let turn = this.turnQueues.get(turnId);
+    const sessionId = (threadId ? this.threadToSession.get(threadId) : undefined) ?? turn?.sessionId ?? threadId;
+    if (!sessionId) return;
+    if (!turn && shouldCreateBackgroundTurn(notification.method)) {
+      turn = this.createBackgroundTurn(sessionId, turnId);
+    }
+
+    if (notification.method === "turn/started") {
+      const stored = this.sessions.get(sessionId);
+      if (stored) {
+        stored.status = withContext(stored, { type: "running", turnId });
+        stored.currentTurnId = turnId;
+        stored.updatedAt = new Date().toISOString();
+      }
+      return;
+    }
+    if (notification.method === "thread/tokenUsage/updated") {
+      const stored = this.sessions.get(sessionId);
+      if (stored) {
+        const context = parseTokenUsage(objectValue(params.tokenUsage));
+        if (context) {
+          stored.status = { ...stored.status, context };
+          stored.updatedAt = new Date().toISOString();
+        }
+      }
+      return;
+    }
+    if (notification.method === "item/agentMessage/delta") {
+      const delta = stringValue(params.delta);
+      if (!delta) return;
+      const itemId = stringValue(params.itemId);
+      const phase = itemId && turn ? turn.agentMessagePhases.get(itemId) : undefined;
+      if (turn && itemId && phase === "commentary") {
+        this.appendProgressDelta(turn, sessionId, turnId, itemId, delta, "other");
+        return;
+      }
+      if (turn) turn.finalText += delta;
+      this.pushTurnEvent(turnId, { type: "assistant.delta", sessionId, turnId, text: delta });
+      return;
+    }
+    if (notification.method === "item/reasoning/summaryTextDelta") {
+      const delta = stringValue(params.delta);
+      const itemId = stringValue(params.itemId);
+      if (turn && itemId && delta) this.appendProgressDelta(turn, sessionId, turnId, itemId, delta, "reasoning");
+      return;
+    }
+    if (notification.method === "item/reasoning/summaryPartAdded") {
+      const itemId = stringValue(params.itemId);
+      if (turn && itemId) this.flushProgressDraft(turn, sessionId, turnId, itemId);
+      return;
+    }
+    if (notification.method === "turn/plan/updated") {
+      const text = textFromPlan(params);
+      if (turn && text) this.pushProgressEvent(turn, sessionId, turnId, `计划更新: ${text}`, "todo");
+      return;
+    }
+    if (notification.method === "item/started") {
+      if (!turn) return;
+      this.handleItemStarted(turn, sessionId, turnId, objectValue(params.item));
+      return;
+    }
+    if (notification.method === "item/plan/delta") {
+      const delta = stringValue(params.delta);
+      const itemId = stringValue(params.itemId);
+      if (turn && itemId && delta) this.appendProgressDelta(turn, sessionId, turnId, itemId, delta, "todo", "计划更新: ");
+      return;
+    }
+    if (notification.method === "item/commandExecution/outputDelta") {
+      const delta = stringValue(params.delta);
+      if (delta) this.pushTurnEvent(turnId, { type: "assistant.progress", sessionId, turnId, text: delta, kind: "command" });
+      return;
+    }
+    if (notification.method === "item/completed") {
+      if (!turn) return;
+      this.handleItemCompleted(turn, sessionId, turnId, objectValue(params.item));
+      return;
+    }
+    if (notification.method === "error") {
+      const error = appServerErrorMessage(params);
+      if (isTransientAppServerError(error)) {
+        const text = `Codex 连接恢复中: ${error}`;
+        if (turn) {
+          this.pushProgressEvent(turn, sessionId, turnId, text, "other");
+        } else {
+          this.pushTurnEvent(turnId, { type: "assistant.progress", sessionId, turnId, text, kind: "other" });
+        }
+        return;
+      }
+      this.pushTurnEvent(turnId, { type: "turn.failed", sessionId, turnId, error });
+      this.closeTurn(turnId, "failed", error);
+      return;
+    }
+    if (notification.method === "turn/completed") {
+      if (!turn) {
+        this.pushTurnEvent(turnId, { type: "turn.completed", sessionId, turnId });
+        return;
+      }
+      const turnPayload = objectValue(params.turn);
+      const status = stringValue(turnPayload.status);
+      if (status === "failed") {
+        const error = stringValue(objectValue(turnPayload.error).message) ?? "codex turn failed";
+        this.pushTurnEvent(turnId, { type: "turn.failed", sessionId, turnId, error });
+        this.closeTurn(turnId, "failed", error);
+      } else {
+        if (turn.finalText) {
+          this.pushTurnEvent(turnId, { type: "assistant.completed", sessionId, turnId, text: turn.finalText });
+        }
+        this.pushTurnEvent(turnId, { type: "turn.completed", sessionId, turnId });
+        this.closeTurn(turnId, "idle");
+      }
+    }
+  }
+
+  private async drainBackgroundTurn(queue: AsyncEventQueue<CodexEvent>): Promise<void> {
+    for await (const event of queue) {
+      await this.emitBackgroundEvent(event);
+    }
+  }
+
+  private async emitBackgroundEvent(event: CodexEvent): Promise<void> {
+    for (const handler of [...this.backgroundHandlers]) {
+      await handler(event);
+    }
+  }
+
+  private handleItemCompleted(turn: TurnQueueRecord, sessionId: string, turnId: string, item: Record<string, unknown>): void {
+    const itemType = stringValue(item.type);
+    const itemId = stringValue(item.id);
+    if (itemId) this.flushProgressDraft(turn, sessionId, turnId, itemId);
+    if (itemType === "agentMessage") {
+      const text = stringValue(item.text);
+      const phase = messagePhaseValue(item.phase);
+      if (phase === "commentary") {
+        if (itemId && turn.emittedProgressItemIds.has(itemId)) return;
+        if (text) this.pushProgressEvent(turn, sessionId, turnId, text, "other");
+        return;
+      }
+      if (text) {
+        turn.finalText = text;
+        turn.queue.push({ type: "assistant.completed", sessionId, turnId, text });
+      }
+      return;
+    }
+    if (itemType === "reasoning") {
+      if (itemId && turn.emittedProgressItemIds.has(itemId)) return;
+      const text = [...arrayValue(item.summary), ...arrayValue(item.content)]
+        .map((entry) => typeof entry === "string" ? entry : undefined)
+        .filter((entry): entry is string => Boolean(entry))
+        .join("\n")
+        .trim();
+      if (text) this.pushProgressEvent(turn, sessionId, turnId, text, "reasoning");
+      return;
+    }
+    if (itemType === "plan") {
+      const alreadyEmittedProgress = Boolean(itemId && turn.emittedProgressItemIds.has(itemId));
+      const text = stringValue(item.text);
+      if (text) {
+        if (!alreadyEmittedProgress) this.pushProgressEvent(turn, sessionId, turnId, `计划更新: ${text}`, "todo");
+        if (turn.collaborationMode === "plan") {
+          this.pushTurnEvent(turnId, { type: "assistant.plan", sessionId, turnId, text });
+        }
+      }
+      return;
+    }
+    const progress = progressFromThreadItem(item);
+    if (progress) {
+      this.pushProgressEvent(turn, sessionId, turnId, progress.text, progress.kind);
+    }
+  }
+
+  private handleItemStarted(turn: TurnQueueRecord, _sessionId: string, _turnId: string, item: Record<string, unknown>): void {
+    const itemType = stringValue(item.type);
+    if (itemType === "reasoning") {
+      this.pushProgressEvent(turn, turn.sessionId, turn.turnId, "正在分析...", "reasoning");
+    } else if (itemType === "plan") {
+      this.pushProgressEvent(turn, turn.sessionId, turn.turnId, "正在规划...", "todo");
+    } else if (itemType === "agentMessage") {
+      const itemId = stringValue(item.id);
+      const phase = messagePhaseValue(item.phase);
+      if (itemId && phase) turn.agentMessagePhases.set(itemId, phase);
+    }
+  }
+
+  private appendProgressDelta(
+    turn: TurnQueueRecord,
+    sessionId: string,
+    turnId: string,
+    itemId: string,
+    delta: string,
+    kind: CodexProgressKind,
+    prefix?: string,
+  ): void {
+    const draft = turn.progressDrafts.get(itemId) ?? { kind, text: "", prefix };
+    draft.text += delta;
+    draft.kind = kind;
+    draft.prefix = prefix;
+    turn.progressDrafts.set(itemId, draft);
+    if (shouldFlushProgressDraft(draft.text)) {
+      this.flushProgressDraft(turn, sessionId, turnId, itemId);
+    }
+  }
+
+  private flushProgressDraft(turn: TurnQueueRecord, sessionId: string, turnId: string, itemId: string): void {
+    const draft = turn.progressDrafts.get(itemId);
+    if (!draft) return;
+    turn.progressDrafts.delete(itemId);
+    const text = draft.text.trim();
+    if (!text) return;
+    turn.emittedProgressItemIds.add(itemId);
+    this.pushProgressEvent(turn, sessionId, turnId, `${draft.prefix ?? ""}${text}`, draft.kind);
+  }
+
+  private pushProgressEvent(
+    turn: TurnQueueRecord,
+    sessionId: string,
+    turnId: string,
+    text: string,
+    kind: CodexProgressKind,
+  ): void {
+    const normalized = text.trim();
+    if (!normalized || turn.emittedProgress.has(normalized)) return;
+    turn.emittedProgress.add(normalized);
+    turn.queue.push({ type: "assistant.progress", sessionId, turnId, text: normalized, kind });
+  }
+}

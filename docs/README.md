@@ -52,6 +52,9 @@
 - `bridge-modularization-design.zh-CN.md`
   Bridge 模块化拆分设计。说明如何在保留现有全部功能的前提下，把当前单体 `bridge.ts` 拆成 command router、session flow、route queue、steering、delivery、status 文案和格式化工具等模块，并要求拆分前保留旧文件对照备份。
 
+- `large-core-file-modularization-design.zh-CN.md`
+  大型核心文件模块化拆分设计。说明如何继续拆分 `app-server-codex-adapter.ts` 和 `serve.ts`，并沿用“原文件先改名备份、再创建同名入口逐步拆分”的迁移方式。
+
 - `feishu-adapter-design.zh-CN.md`
   飞书适配设计。说明第一阶段如何用飞书 WebSocket 长连接接入私聊文本消息，并默认投递 Codex 进度。
 
@@ -117,11 +120,12 @@ secrets/feishu.local.md
 9. 做 TUI 核心功能补齐时读 `tui-core-functionality-followups.zh-CN.md`，确认渠道删除、备注、添加时间、session 活跃时间和运行日志全文展示语义。
 10. 做启动/运行期相关开发时读 `runtime-single-instance-lock.zh-CN.md`，确认重复启动检测、运行锁、心跳和残留锁清理语义。
 11. 做 Bridge 核心拆分时读 `bridge-modularization-design.zh-CN.md`，确认备份旧文件、模块边界、分阶段迁移和行为不变验收标准。
-12. 读 `cli-interaction-redesign.zh-CN.md`，了解上一轮普通 CLI 重构背景和历史设计。
-13. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
-14. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
-15. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
-16. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
+12. 做 app-server adapter 或 serve 入口拆分时读 `large-core-file-modularization-design.zh-CN.md`，确认原文件改名备份、薄入口、新模块边界和逐模块测试要求。
+13. 读 `cli-interaction-redesign.zh-CN.md`，了解上一轮普通 CLI 重构背景和历史设计。
+14. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
+15. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
+16. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
+17. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
 
 ## 分阶段工作顺序
 
