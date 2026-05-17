@@ -21,6 +21,10 @@ chat-codex-uploads/
 logs/
 *.log
 
+# Local screenshots and browser captures
+reports/screenshots/
+linux-do-gui.png
+
 # Local channel credentials and login state
 *.session.json
 *.token.json

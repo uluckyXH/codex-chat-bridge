@@ -41,12 +41,14 @@ test("bridge formatters keep route mutation guard semantics", () => {
   assert.equal(isRouteBusyMutationCommand("progress", ["silent"], "/progress silent"), false);
 });
 
-test("bridge formatters preserve status labels and Beijing goal time", () => {
+test("bridge formatters preserve status labels and local goal time", () => {
   assert.equal(formatRunPolicy({ permissionMode: "approval", sandbox: "workspace-write" }), "approval sandbox=workspace-write");
   assert.equal(formatRunPolicy({ permissionMode: "full" }), "full");
   assert.equal(formatModelPolicy({ model: "gpt-5.5", reasoningEffort: "high" }), "model=`gpt-5.5` effort=`high`");
   assert.equal(formatApprovalKindForUser("command"), "命令执行");
-  assert.equal(formatGoalTimestamp(1700000000), "2023-11-15 06:13:20（北京时间）");
+  assert.equal(formatGoalTimestamp(1700000000, { timeZone: "Asia/Shanghai" }), "2023-11-15 06:13:20（Asia/Shanghai）");
+  assert.equal(formatGoalTimestamp(1700000000, { timeZone: "UTC" }), "2023-11-14 22:13:20（UTC）");
+  assert.equal(formatGoalTimestamp(0, { timeZone: "UTC" }), "未知");
 });
 
 test("bridge formatters render session choices and final answers", () => {

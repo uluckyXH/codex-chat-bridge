@@ -1,3 +1,5 @@
+import { formatLocalClock } from "../time/display-time.js";
+
 export interface Logger {
   info(message: string, meta?: Record<string, unknown>): void;
   warn(message: string, meta?: Record<string, unknown>): void;
@@ -26,7 +28,7 @@ export class ConsoleLogger implements Logger {
 
   private write(level: string, message: string, meta?: Record<string, unknown>): void {
     const metaText = meta ? ` ${formatMeta(redact(meta))}` : "";
-    const line = `[${formatClock(new Date())}] ${level.toUpperCase()} ${message}${metaText}`;
+    const line = `[${formatLocalClock(new Date())}] ${level.toUpperCase()} ${message}${metaText}`;
     if (level === "error") {
       console.error(line);
     } else {
@@ -66,11 +68,4 @@ function formatMetaValue(value: unknown): string {
   if (value === undefined) return "undefined";
   if (value === null) return "null";
   return JSON.stringify(value);
-}
-
-function formatClock(date: Date): string {
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  const seconds = date.getSeconds().toString().padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
 }

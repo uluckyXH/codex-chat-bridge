@@ -15,6 +15,7 @@ import type {
 } from "../codex/types.js";
 import { CODEX_REASONING_EFFORTS } from "../codex/types.js";
 import { normalizeCodexInput } from "../codex/input.js";
+import { formatLocalDateTimeWithZone, type DisplayTimeOptions } from "../time/display-time.js";
 import { BRIDGE_SEND_FILE_PREFIX } from "./media-extractor.js";
 import type { InitialRouteBinding, ProgressDeliveryMode, QueuedSteer, SessionChoice } from "./bridge-types.js";
 import { SEND_FILE_MAX_FILES } from "./bridge-types.js";
@@ -505,37 +506,10 @@ export function formatDuration(seconds: number): string {
   return `${rest}s`;
 }
 
-export function formatGoalTimestamp(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "unknown";
-  return formatChinaDateTime(seconds * 1000);
-}
-
-const chinaDateTimeFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Asia/Shanghai",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hourCycle: "h23",
-});
-
-function formatChinaDateTime(timestampMs: number): string {
-  const parts = Object.fromEntries(
-    chinaDateTimeFormatter
-      .formatToParts(new Date(timestampMs))
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value]),
-  );
-  const year = parts.year;
-  const month = parts.month;
-  const day = parts.day;
-  const hour = parts.hour;
-  const minute = parts.minute;
-  const second = parts.second;
-  if (!year || !month || !day || !hour || !minute || !second) return "unknown";
-  return `${year}-${month}-${day} ${hour}:${minute}:${second}（北京时间）`;
+export function formatGoalTimestamp(seconds: number, options: DisplayTimeOptions = {}): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "未知";
+  const formatted = formatLocalDateTimeWithZone(seconds, options);
+  return formatted;
 }
 
 export function goalErrorText(error: unknown): string {

@@ -14,6 +14,7 @@ import type { ChannelAdapter, ChannelCapabilities, ChannelStatus } from "../../p
 import { ChannelConfigStore } from "../../state/channel-config-store.js";
 import { FileStateStore, type RemoveChannelStateResult } from "../../state/file-state-store.js";
 import type { ChannelInstanceRecord } from "../../state/persistent-state-types.js";
+import { formatLocalDateTime, formatLocalShortDateTime } from "../../time/display-time.js";
 
 export interface ChannelActionsOptions {
   cwd?: string;
@@ -253,15 +254,11 @@ export function channelDisplayName(record: ChannelInstanceRecord, status?: Chann
 }
 
 export function formatShortDateTime(iso: string | undefined): string {
-  const date = parseDate(iso);
-  if (!date) return "未知";
-  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  return formatLocalShortDateTime(iso);
 }
 
 export function formatFullDateTime(iso: string | undefined): string {
-  const date = parseDate(iso);
-  if (!date) return "未知";
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+  return formatLocalDateTime(iso);
 }
 
 export function loadFeishuCredentialsForAccount(accountId: string | undefined, env: NodeJS.ProcessEnv = process.env): FeishuCredentials {
@@ -304,16 +301,6 @@ function formatChannelType(type: string): string {
   if (type === "weixin") return "微信";
   if (type === "feishu" || type === "lark") return "飞书";
   return type;
-}
-
-function parseDate(iso: string | undefined): Date | undefined {
-  if (!iso) return undefined;
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
-
-function pad2(value: number): string {
-  return value.toString().padStart(2, "0");
 }
 
 function formatChannelState(state: string): string {

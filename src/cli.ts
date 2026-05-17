@@ -21,6 +21,7 @@ import { MockCodexAdapter } from "./codex/mock-codex-adapter.js";
 import type { CodexAdapter } from "./codex/types.js";
 import { resolveNewSessionWorkdir } from "./codex/workdir.js";
 import { ConsoleLogger } from "./logging/logger.js";
+import { formatLocalDateTime } from "./time/display-time.js";
 
 interface StartupOptions {
   session?: string;
@@ -398,7 +399,7 @@ function formatSessionChoice(index: number, session: DiscoveredCodexSession): st
   const title = formatCodexSessionTitleForDisplay(session);
   const parts = [`${index}. ${title ?? session.id}`];
   parts.push(`   Session ID: ${session.id}`);
-  if (session.updatedAt) parts.push(`   最近更新: ${session.updatedAt}`);
+  if (session.updatedAt) parts.push(`   最近更新: ${formatLocalDateTime(session.updatedAt)}`);
   if (session.cwd) parts.push(`   工作目录: ${session.cwd}`);
   return parts.join("\n");
 }

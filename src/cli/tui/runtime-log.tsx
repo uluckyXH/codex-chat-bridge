@@ -4,6 +4,7 @@ import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../../protocol
 import type { TranscriptSink } from "../../logging/transcript.js";
 import type { Logger } from "../../logging/logger.js";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
+import { formatLocalClock } from "../../time/display-time.js";
 import { Frame, KeyValue, Muted, Section, truncate } from "./ui-components.js";
 
 export type RuntimeLogKind = "system" | "inbound" | "outbound" | "progress" | "media" | "error";
@@ -176,7 +177,7 @@ function RuntimeLogRow({ entry }: { entry: RuntimeLogEntry }): React.JSX.Element
           : "gray";
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={color}>{formatClock(entry.time)}  {kindLabel(entry.kind)}  {truncate(entry.source, 48)}</Text>
+      <Text color={color}>{formatLocalClock(entry.time)}  {kindLabel(entry.kind)}  {truncate(entry.source, 48)}</Text>
       {(entry.message.trim() || "空消息").split(/\r?\n/).map((line, index) => <Text key={index} wrap="wrap">  {line}</Text>)}
     </Box>
   );
@@ -203,13 +204,6 @@ function displaySender(message: ChannelMessage): string {
 
 function formatConversation(target: ChannelTarget): string {
   return `${target.conversation.kind}:${truncate(target.conversation.id, 28)}`;
-}
-
-function formatClock(date: Date): string {
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  const seconds = date.getSeconds().toString().padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
 }
 
 function formatPolicy(policy: CodexRunPolicy): string {

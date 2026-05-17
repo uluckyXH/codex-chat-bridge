@@ -1,6 +1,7 @@
 import type { Writable } from "node:stream";
 import { env, stdout } from "node:process";
 import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../protocol/channel.js";
+import { formatLocalClock } from "../time/display-time.js";
 
 export interface TranscriptSink {
   inbound(message: ChannelMessage, text: string): void;
@@ -89,7 +90,7 @@ export class ConsoleTranscriptSink implements TranscriptSink {
   }
 
   private header(channel: string, direction: "<=" | "=>" | "--", subject: string, detail: string, tone: TranscriptTone): string {
-    return paint(this.color, headerColor(tone), `[${formatClock(this.now())}] ${channel} ${direction} ${subject} | ${detail}`);
+    return paint(this.color, headerColor(tone), `[${formatLocalClock(this.now())}] ${channel} ${direction} ${subject} | ${detail}`);
   }
 
   private writeBlock(lines: Array<string | undefined>): void {
@@ -191,13 +192,6 @@ function bodyColor(tone: TranscriptTone): string {
 
 function paint(enabled: boolean, color: string, value: string): string {
   return enabled ? `\x1b[${color}m${value}\x1b[0m` : value;
-}
-
-function formatClock(date: Date): string {
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  const seconds = date.getSeconds().toString().padStart(2, "0");
-  return `${hours}:${minutes}:${seconds}`;
 }
 
 function shorten(value: string, maxLength: number): string {

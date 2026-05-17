@@ -14,6 +14,7 @@ import type { ChannelRegistry } from "../channels/registry.js";
 import type { ChannelMessage } from "../protocol/channel.js";
 import type { ChannelDeliveryPolicy } from "../protocol/delivery-policy.js";
 import type { MemoryStateStore } from "../state/memory-state-store.js";
+import { formatLocalDateTime } from "../time/display-time.js";
 import type { InitialRouteBinding, ProgressDeliveryMode } from "./bridge-types.js";
 import {
   formatApprovalSupport,
@@ -300,7 +301,7 @@ export class BridgeStatusText {
 
   private formatSessionLine(id: string, status: string, updatedAt: string, cwd?: string, title?: string): string {
     const parts = [`- ${id}`, status];
-    if (updatedAt) parts.push(updatedAt);
+    if (updatedAt) parts.push(formatLocalDateTime(updatedAt));
     if (title) parts.push(truncateDisplayText(title));
     if (cwd) parts.push(`cwd=${cwd}`);
     return parts.join(" ");

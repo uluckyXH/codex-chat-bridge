@@ -10,6 +10,7 @@ import type { CodexAdapter, CodexBackgroundEventHandler, CodexCollaborationMode,
 import type { TranscriptSink } from "../../src/logging/transcript.js";
 import type { ChannelAttachment, ChannelCapabilities, ChannelMedia, ChannelMessage, ChannelTarget, SendResult } from "../../src/protocol/channel.js";
 import type { ChannelDeliveryPolicy } from "../../src/protocol/delivery-policy.js";
+import { currentTimeZone, formatLocalDateTimeWithZone } from "../../src/time/display-time.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -802,14 +803,15 @@ test("Bridge manages experimental goal commands for the current session", async 
   assert.ok(status.includes("长期目标: 进行中 - 完成微信 Goal 适配并保持测试通过"));
   assert.ok(status.includes("目标 token: `0`"));
   assert.ok(status.includes("目标耗时: `0s`"));
-  assert.match(status, /目标更新时间: `20\d\d-\d\d-\d\d \d\d:\d\d:\d\d（北京时间）`/);
+  assert.match(status, new RegExp(`目标更新时间: \`20\\d\\d-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d（${escapeRegExp(currentTimeZone())}）\``));
+  assert.doesNotMatch(status, /北京时间/);
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已暂停 Goal") && message.text.includes("Status: `paused`")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已恢复 Goal") && message.text.includes("Status: `active`")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已清除 Goal")));
   assert.ok(channel.sentMessages.at(-1)?.text.includes("当前没有 Goal"));
 });
 
-test("Bridge status renders Goal updated time in Beijing time", async () => {
+test("Bridge status renders Goal updated time in the local machine timezone", async () => {
   const channel = new MockChannelAdapter();
   const codex = new FixedGoalTimeCodexAdapter();
   const bridge = new Bridge({ channel, codex, cwd: process.cwd() });
@@ -820,7 +822,8 @@ test("Bridge status renders Goal updated time in Beijing time", async () => {
   await bridge.stop();
 
   const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
-  assert.ok(status.includes("目标更新时间: `2023-11-15 06:13:20（北京时间）`"));
+  assert.ok(status.includes(`目标更新时间: \`${formatLocalDateTimeWithZone(1700000000)}\``));
+  assert.doesNotMatch(status, /北京时间/);
   assert.doesNotMatch(status, /目标更新时间: `[^`]*T[^`]*Z`/);
 });
 
@@ -2016,6 +2019,10 @@ function mockImageAttachment(localPath: string): ChannelAttachment {
     localPath,
     downloadState: "available",
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
