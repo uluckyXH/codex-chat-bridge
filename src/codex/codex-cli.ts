@@ -1,7 +1,14 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  formatCodexUnavailableError,
+  resolveCodexCommand,
+  spawnCodex,
+  type CodexBinSource,
+  type CodexCommandResolution,
+} from "./codex-process.js";
 
 export type CodexPermissionMode = "approval" | "full";
 export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -21,6 +28,11 @@ export interface CodexRunPolicyStatus {
 export interface CodexCliStatus {
   available: boolean;
   codexBin: string;
+  requestedCodexBin: string;
+  codexBinSource: CodexBinSource;
+  platform: string;
+  arch: string;
+  command: CodexCommandResolution;
   version?: string;
   error?: string;
 }
@@ -51,14 +63,35 @@ export function buildCodexRootArgs(policy: CodexRunPolicy): string[] {
   ];
 }
 
-export async function checkCodexCli(codexBin = "codex", timeoutMs = 5000): Promise<CodexCliStatus> {
+export async function checkCodexCli(codexBin?: string, timeoutMs = 5000): Promise<CodexCliStatus> {
+  const command = resolveCodexCommand({ codexBin });
   return new Promise((resolve) => {
-    const child = spawn(codexBin, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnCodex(command, ["--version"], { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    const baseStatus = {
+      codexBin: command.command,
+      requestedCodexBin: command.requested,
+      codexBinSource: command.source,
+      platform: command.platform,
+      arch: command.arch,
+      command,
+    };
+    if (!child.stdout || !child.stderr) {
+      resolve({
+        available: false,
+        ...baseStatus,
+        error: formatCodexUnavailableError(command, "codex --version stdio is unavailable"),
+      });
+      return;
+    }
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
-      resolve({ available: false, codexBin, error: `codex --version timed out after ${timeoutMs}ms` });
+      resolve({
+        available: false,
+        ...baseStatus,
+        error: formatCodexUnavailableError(command, `codex --version timed out after ${timeoutMs}ms`),
+      });
     }, timeoutMs);
 
     child.stdout.setEncoding("utf8");
@@ -67,14 +100,18 @@ export async function checkCodexCli(codexBin = "codex", timeoutMs = 5000): Promi
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
     child.on("error", (error) => {
       clearTimeout(timer);
-      resolve({ available: false, codexBin, error: error.message });
+      resolve({ available: false, ...baseStatus, error: formatCodexUnavailableError(command, error.message) });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) {
-        resolve({ available: true, codexBin, version: stdout.trim() || stderr.trim() });
+        resolve({ available: true, ...baseStatus, version: stdout.trim() || stderr.trim() });
       } else {
-        resolve({ available: false, codexBin, error: stderr.trim() || stdout.trim() || `exit ${code}` });
+        resolve({
+          available: false,
+          ...baseStatus,
+          error: formatCodexUnavailableError(command, stderr.trim() || stdout.trim() || `exit ${code}`),
+        });
       }
     });
   });

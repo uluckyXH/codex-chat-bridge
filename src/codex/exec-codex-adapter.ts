@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import type {
   CodexAdapter,
@@ -12,10 +12,12 @@ import type {
   CodexPromptInput,
 } from "./types.js";
 import { buildCodexRootArgs, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, type CodexRunPolicy } from "./codex-cli.js";
+import { resolveCodexCommand, spawnCodex, type CodexCommandResolution } from "./codex-process.js";
 import { codexInputPlainText } from "./input.js";
 
 export interface ExecCodexAdapterOptions {
   codexBin?: string;
+  codexCommand?: CodexCommandResolution;
   runPolicy?: CodexRunPolicy;
   codexHome?: string;
 }
@@ -34,7 +36,7 @@ interface RunningExecProcess {
 }
 
 export class ExecCodexAdapter implements CodexAdapter {
-  private readonly codexBin: string;
+  private readonly codexCommand: CodexCommandResolution;
   private defaultRunPolicy: CodexRunPolicy;
   private readonly sessionRunPolicies = new Map<string, CodexRunPolicy>();
   private readonly codexHome?: string;
@@ -43,7 +45,7 @@ export class ExecCodexAdapter implements CodexAdapter {
   private sessionSequence = 0;
 
   constructor(options: ExecCodexAdapterOptions = {}) {
-    this.codexBin = options.codexBin ?? "codex";
+    this.codexCommand = options.codexCommand ?? resolveCodexCommand({ codexBin: options.codexBin });
     this.defaultRunPolicy = cloneRunPolicy(options.runPolicy ?? { permissionMode: "approval", sandbox: "workspace-write" });
     this.codexHome = options.codexHome;
   }
@@ -99,10 +101,13 @@ export class ExecCodexAdapter implements CodexAdapter {
     yield { type: "turn.started", sessionId, turnId };
 
     const args = this.buildArgs(stored, promptText);
-    const child = spawn(this.codexBin, args, {
+    const child = spawnCodex(this.codexCommand, args, {
       cwd: session.cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (!child.stdout || !child.stderr) {
+      throw new Error("codex exec stdio is unavailable");
+    }
     const running: RunningExecProcess = { child, cancelRequested: false };
     this.runningProcesses.set(sessionId, running);
     const closePromise = new Promise<number | null>((resolve) => {

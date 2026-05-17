@@ -3,6 +3,7 @@ import { formatCodexSessionTitleForDisplay } from "../../codex/codex-cli.js";
 import { formatSessionActiveTime } from "../actions/binding-actions.js";
 import type { PreparedServeStartup } from "../launcher-types.js";
 import { formatPermissionModeForUser } from "../serve-wizard.js";
+import { formatCodexStatusForCli } from "./summary.js";
 
 export function printRuntimeSummary(
   title: string,
@@ -12,6 +13,7 @@ export function printRuntimeSummary(
   console.log("");
   console.log(`${title}已启动`);
   console.log("- 会话: 按微信聊天分别绑定；首条消息按策略处理");
+  console.log(`- Codex CLI: ${formatCodexStatusForCli(startup.codexStatus)}`);
   console.log(`- 工作目录: ${startup.cwd}`);
   console.log(`- 新 session 默认权限: ${formatPolicyForCli(startup.policy)}`);
   console.log("- 退出: Ctrl+C");

@@ -15,6 +15,7 @@ import { RuntimeLogStore, RuntimeTuiLogger, RuntimeTuiTranscriptSink } from "../
 import { formatFirstRoutePresetForUser, formatUnboundRoutePolicyForUser } from "../serve-wizard.js";
 import { printRuntimeSummary } from "./formatters.js";
 import { waitForShutdownSignal } from "./prompts.js";
+import { formatCodexStatusForCli } from "./summary.js";
 
 export async function startServeBridge(
   startup: PreparedServeStartup,
@@ -46,6 +47,7 @@ export async function startServeBridge(
   try {
     if (runtimeLogs) {
       runtimeLogs.add("system", "Bridge", "多渠道 Codex 中间件已启动，正在等待微信 / 飞书消息。");
+      if (startup.codexStatus) runtimeLogs.add("system", "Codex", formatCodexStatusForCli(startup.codexStatus));
       runtimeLogs.add("system", "渠道", adapters.map((adapter) => adapter.id).join(", "));
       runtimeLogs.add("system", "退出", "按 Ctrl+C 停止服务。");
       await runRuntimeLogTui({
@@ -54,6 +56,7 @@ export async function startServeBridge(
         cwd: startup.cwd,
         policy: startup.policy,
         routePolicy: formatUnboundRoutePolicyForUser(plan.unboundRoutePolicy),
+        codexStatus: startup.codexStatus,
       }, runtimeLogs);
     } else {
       printRuntimeSummary("多渠道 Codex 中间件", startup, { progressDisabled: true });
@@ -70,9 +73,12 @@ export async function startServeBridge(
 }
 
 export function createRealCodexAdapter(startup: PreparedServeStartup): CodexAdapter {
+  if (startup.codexStatus && !startup.codexStatus.available) {
+    throw new Error(`Codex 不可用: ${startup.codexStatus.error ?? "unknown error"}`);
+  }
   const runPolicy = startup.policy;
   if (startup.adapterMode === "exec") {
-    return new ExecCodexAdapter({ runPolicy });
+    return new ExecCodexAdapter({ runPolicy, codexCommand: startup.codexStatus?.command });
   }
-  return new AppServerCodexAdapter({ runPolicy });
+  return new AppServerCodexAdapter({ runPolicy, codexCommand: startup.codexStatus?.command });
 }

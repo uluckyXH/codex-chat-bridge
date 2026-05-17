@@ -1,10 +1,11 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
+import { resolveCodexCommand, spawnCodex, type CodexCommandResolution } from "../codex-process.js";
 import type { JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, PendingResponse } from "./types.js";
 
 export interface AppServerRpcClientOptions {
-  codexBin: string;
+  codexBin: string | CodexCommandResolution;
   requestTimeoutMs: number;
   onServerRequest: (request: JsonRpcRequest) => Promise<void> | void;
   onNotification: (notification: JsonRpcNotification) => void;
@@ -12,7 +13,7 @@ export interface AppServerRpcClientOptions {
 }
 
 export class AppServerRpcClient {
-  private readonly codexBin: string;
+  private readonly codexCommand: CodexCommandResolution;
   private readonly requestTimeoutMs: number;
   private readonly onServerRequest: (request: JsonRpcRequest) => Promise<void> | void;
   private readonly onNotification: (notification: JsonRpcNotification) => void;
@@ -26,7 +27,7 @@ export class AppServerRpcClient {
   private stopping = false;
 
   constructor(options: AppServerRpcClientOptions) {
-    this.codexBin = options.codexBin;
+    this.codexCommand = typeof options.codexBin === "string" ? resolveCodexCommand({ codexBin: options.codexBin }) : options.codexBin;
     this.requestTimeoutMs = options.requestTimeoutMs;
     this.onServerRequest = options.onServerRequest;
     this.onNotification = options.onNotification;
@@ -106,7 +107,7 @@ export class AppServerRpcClient {
   private async startProcessAndInitialize(): Promise<void> {
     this.stopping = false;
     this.stderr = "";
-    this.child = spawn(this.codexBin, ["app-server", "--listen", "stdio://"], {
+    this.child = spawnCodex(this.codexCommand, ["app-server", "--listen", "stdio://"], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stderr?.setEncoding("utf8");

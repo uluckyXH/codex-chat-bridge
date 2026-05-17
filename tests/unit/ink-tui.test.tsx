@@ -24,6 +24,9 @@ test("Ink TUI renders dashboard and navigates to core pages", async () => {
   assert.match(cleanFrame(view), new RegExp(escapeRegExp(expectedChatCodexTitle())));
   assert.match(cleanFrame(view), /启动服务/);
   assert.match(cleanFrame(view), /已准备好。按 Enter 启动 Bridge，并进入运行日志面板/);
+  assert.match(cleanFrame(view), /Codex CLI/);
+  assert.match(cleanFrame(view), /codex-cli 0\.130\.0/);
+  assert.match(cleanFrame(view), /darwin arm64/);
   assert.match(cleanFrame(view), /渠道/);
   assert.match(cleanFrame(view), /聊天绑定/);
   assert.match(cleanFrame(view), /权限/);
@@ -294,12 +297,14 @@ test("Runtime TUI renders startup summary and transcript logs", async () => {
     cwd: "/repo",
     policy: { permissionMode: "approval", sandbox: "workspace-write" },
     routePolicy: "首条消息自动创建新 session",
+    codexStatus: codexStatusFixture(),
   }} store={store} />);
   await waitForInk();
 
   assert.match(cleanFrame(view), new RegExp(`${escapeRegExp(expectedChatCodexTitle())} 运行中`));
   assert.match(cleanFrame(view), /已启动\s+Ctrl\+C 停止/);
   assert.match(cleanFrame(view), /Chat Codex 已启动/);
+  assert.match(cleanFrame(view), /codex-cli 0\.130\.0/);
   assert.match(cleanFrame(view), /feishu-default/);
   assert.match(cleanFrame(view), /收到/);
   assert.match(cleanFrame(view), /发送/);
@@ -365,6 +370,7 @@ test("Runtime TUI keeps full log messages and caps store at 300 entries", async 
     cwd: "/repo",
     policy: { permissionMode: "approval", sandbox: "workspace-write" },
     routePolicy: "首条消息自动创建新 session",
+    codexStatus: codexStatusFixture(),
   }} store={displayStore} />);
   await waitForInk();
 
@@ -524,6 +530,7 @@ function dashboardFixture(): LauncherDashboard {
         permissionMode: "approval",
         sandbox: "workspace-write",
       },
+      codexStatus: codexStatusFixture(),
     },
     canStart: {
       ok: true,
@@ -537,6 +544,26 @@ function dashboardFixture(): LauncherDashboard {
     message: "可以启动服务。",
   };
   return dashboard;
+}
+
+function codexStatusFixture(): LauncherDashboard["startup"]["codexStatus"] {
+  return {
+    available: true,
+    codexBin: "/usr/local/bin/codex",
+    requestedCodexBin: "codex",
+    codexBinSource: "path",
+    platform: "darwin",
+    arch: "arm64",
+    version: "codex-cli 0.130.0",
+    command: {
+      command: "/usr/local/bin/codex",
+      requested: "codex",
+      source: "path",
+      platform: "darwin",
+      arch: "arm64",
+      pathResolved: true,
+    },
+  };
 }
 
 function emptyDashboardFixture(): LauncherDashboard {

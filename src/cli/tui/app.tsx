@@ -124,6 +124,11 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setFlash({ kind: "info", message: validation.message });
       return;
     }
+    if (validation.reason === "codex_unavailable") {
+      setScreen({ name: "status" });
+      setFlash({ kind: "error", message: validation.message });
+      return;
+    }
     const channel = validation.channels[0];
     setScreen({ name: "channelDetail", channelId: channel.record.id });
     setFlash({ kind: "error", message: validation.message });

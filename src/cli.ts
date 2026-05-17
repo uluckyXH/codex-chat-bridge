@@ -6,7 +6,8 @@ import { MockChannelAdapter } from "./channels/mock/mock-channel-adapter.js";
 import { TerminalChannelAdapter } from "./channels/terminal/terminal-channel-adapter.js";
 import { WeixinAdapter } from "./channels/weixin/weixin-adapter.js";
 import { displayWeixinQrCode } from "./channels/weixin/weixin-qr-display.js";
-import { checkCodexCli, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, formatCodexSessionTitleForDisplay, truncateDisplayText, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
+import { checkCodexCli, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, formatCodexSessionTitleForDisplay, truncateDisplayText, type CodexCliStatus, type CodexPermissionMode, type CodexRunPolicy, type DiscoveredCodexSession } from "./codex/codex-cli.js";
+import { formatCodexCommandSource, formatCodexPlatform } from "./codex/codex-process.js";
 import { runServe } from "./cli/serve.js";
 import { runFeishuStatus } from "./cli/feishu.js";
 import {
@@ -44,6 +45,7 @@ interface PreparedCodexStartup {
   sessionId?: string;
   sessionTitle?: string;
   cwd: string;
+  codexStatus?: CodexCliStatus;
 }
 
 async function main(argv: string[]): Promise<void> {
@@ -231,7 +233,10 @@ async function prepareCodexStartup(
   }
   console.log("");
   console.log("Codex 启动准备");
+  console.log(`- 平台: ${formatCodexPlatform(status)}`);
   console.log(`- CLI: ${status.version ?? status.codexBin}`);
+  console.log(`- 路径: ${status.codexBin}`);
+  console.log(`- 来源: ${formatCodexCommandSource(status.codexBinSource)}`);
   const interactive = Boolean(stdin.isTTY && stdout.isTTY);
   const rl = interactive ? createInterface({ input: stdin, output: stdout }) : undefined;
   try {
@@ -261,6 +266,7 @@ async function prepareCodexStartup(
       sessionId: sessionChoice.sessionId,
       sessionTitle: sessionChoice.session ? displayCodexSessionTitle(sessionChoice.session) : undefined,
       cwd,
+      codexStatus: status,
     };
   } finally {
     rl?.close();
@@ -391,7 +397,7 @@ function printStartupSelection(params: {
 
 function printRuntimeSummary(
   title: string,
-  startup: PreparedCodexStartup | { policy?: CodexRunPolicy; adapterMode?: RealCodexAdapterMode; sessionId?: string; sessionTitle?: string; cwd: string },
+  startup: PreparedCodexStartup | { policy?: CodexRunPolicy; adapterMode?: RealCodexAdapterMode; sessionId?: string; sessionTitle?: string; cwd: string; codexStatus?: CodexCliStatus },
   progressMode?: ProgressDeliveryMode,
   display: { progressDisabled?: boolean } = {},
 ): void {
@@ -400,6 +406,10 @@ function printRuntimeSummary(
   console.log(`- 会话: ${startup.sessionId ? `首个聊天绑定 ${startup.sessionId}` : "首条消息自动新建"}`);
   if (startup.sessionTitle) console.log(`- 标题: ${truncateDisplayText(startup.sessionTitle)}`);
   console.log(`- 工作目录: ${startup.cwd}`);
+  if (startup.codexStatus) {
+    console.log(`- Codex CLI: ${startup.codexStatus.version ?? startup.codexStatus.codexBin}`);
+    console.log(`- Codex 路径: ${startup.codexStatus.codexBin}`);
+  }
   if (startup.adapterMode) console.log(`- Codex 接入: ${formatAdapterForCli(startup.adapterMode)}`);
   if (startup.policy) console.log(`- 权限模式: ${formatPolicyForCli(startup.policy)}`);
   console.log(`- 阶段进度: ${formatProgressForCli(progressMode, display.progressDisabled)}`);
@@ -428,12 +438,12 @@ function formatProgressForCli(progressMode: ProgressDeliveryMode | undefined, di
   return formatProgressModeForUser(progressMode, disabled);
 }
 
-function createRealCodexAdapter(startup: PreparedCodexStartup | { policy?: CodexRunPolicy; adapterMode?: RealCodexAdapterMode }): CodexAdapter {
+function createRealCodexAdapter(startup: PreparedCodexStartup | { policy?: CodexRunPolicy; adapterMode?: RealCodexAdapterMode; codexStatus?: CodexCliStatus }): CodexAdapter {
   const runPolicy = startup.policy ?? { permissionMode: "approval", sandbox: "workspace-write" };
   if (startup.adapterMode === "exec") {
-    return new ExecCodexAdapter({ runPolicy });
+    return new ExecCodexAdapter({ runPolicy, codexCommand: startup.codexStatus?.command });
   }
-  return new AppServerCodexAdapter({ runPolicy });
+  return new AppServerCodexAdapter({ runPolicy, codexCommand: startup.codexStatus?.command });
 }
 
 function printHelp(): void {

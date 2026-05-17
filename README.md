@@ -77,6 +77,8 @@ brew install codex
 codex
 ```
 
+Windows 用户如果 PowerShell 里 `codex --version` 正常，但 Chat-Codex 首页显示 Codex CLI 不可用或报 `spawn codex ENOENT`，请参考 [Windows Codex CLI 排障指南](docs/windows-codex-cli-troubleshooting.zh-CN.md)。
+
 首次启动后按 TUI 引导完成 Codex 检查、渠道管理、聊天绑定和启动服务。
 
 ## 运行数据与环境变量
@@ -87,6 +89,7 @@ codex
 | --- | --- | --- |
 | 状态根目录 | `~/.chat-codex/state/` | 保存 Bridge 配置、route/session 绑定、渠道账号状态和本机凭证。 |
 | 上传目录 | `~/.chat-codex/uploads/` | 保存微信/飞书收到的图片和文件，再以本地路径投递给 Codex。 |
+| `CHAT_CODEX_BIN` | 未设置 | 覆盖 Codex CLI 可执行文件路径；主要用于 Windows Codex CLI 路径排障。 |
 | `CHAT_CODEX_STATE_DIR` | 未设置 | 覆盖状态根目录；相对路径按启动 `chat-codex` 时的工作目录解析。 |
 | `CHAT_CODEX_UPLOAD_DIR` | 未设置 | 覆盖上传目录；相对路径按启动 `chat-codex` 时的工作目录解析。 |
 

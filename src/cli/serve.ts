@@ -18,7 +18,7 @@ export async function runServe(options: ServeStartupOptions = {}): Promise<void>
   let plan: ServeChannelPlan | undefined;
   const channelActions = new ChannelActions();
   try {
-    startup = await prepareCodexServeStartup(options, rl, { quiet: useTui });
+    startup = await prepareCodexServeStartup(options, rl, { quiet: useTui, allowUnavailableCodex: useTui });
     const setupChannel = new WeixinAdapter({
       pollOnStart: false,
       verifyCodeProvider: rl ? questionWithReadline(rl) : undefined,

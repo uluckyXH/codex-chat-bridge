@@ -19,6 +19,7 @@ import type {
   CodexPromptInput,
 } from "./types.js";
 import { displayCodexSessionTitle, findCodexSessionById, type CodexRunPolicy } from "./codex-cli.js";
+import { resolveCodexCommand, type CodexCommandResolution } from "./codex-process.js";
 import { codexInputText } from "./input.js";
 import { approvalFromServerRequest, responseForApprovalDecision } from "./app-server/approval-handler.js";
 import { goalFromResponse, goalFromSetResponse } from "./app-server/goal-api.js";
@@ -48,6 +49,7 @@ import { isoFromSeconds, numberValue, objectValue, objectValueOrNull, stringValu
 
 export interface AppServerCodexAdapterOptions {
   codexBin?: string;
+  codexCommand?: CodexCommandResolution;
   runPolicy?: CodexRunPolicy;
   codexHome?: string;
   requestTimeoutMs?: number;
@@ -64,7 +66,7 @@ interface CompactWaiter {
 }
 
 export class AppServerCodexAdapter implements CodexAdapter {
-  private readonly codexBin: string;
+  private readonly codexCommand: CodexCommandResolution;
   private defaultRunPolicy: CodexRunPolicy;
   private readonly sessionRunPolicies = new Map<string, CodexRunPolicy>();
   private defaultModelPolicy: CodexModelPolicy = {};
@@ -85,14 +87,14 @@ export class AppServerCodexAdapter implements CodexAdapter {
   });
 
   constructor(options: AppServerCodexAdapterOptions = {}) {
-    this.codexBin = options.codexBin ?? "codex";
+    this.codexCommand = options.codexCommand ?? resolveCodexCommand({ codexBin: options.codexBin });
     this.defaultRunPolicy = cloneRunPolicy(options.runPolicy ?? { permissionMode: "approval", sandbox: "workspace-write" });
     this.codexHome = options.codexHome;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.interruptTimeoutMs = options.interruptTimeoutMs ?? 1500;
     this.compactTimeoutMs = options.compactTimeoutMs ?? 10 * 60_000;
     this.rpc = new AppServerRpcClient({
-      codexBin: this.codexBin,
+      codexBin: this.codexCommand,
       requestTimeoutMs: this.requestTimeoutMs,
       onServerRequest: (request) => this.handleServerRequest(request),
       onNotification: (notification) => this.handleNotification(notification),

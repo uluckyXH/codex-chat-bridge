@@ -1,7 +1,8 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { PasswordInput, TextInput } from "@inkjs/ui";
-import type { CodexRunPolicy } from "../../codex/codex-cli.js";
+import type { CodexCliStatus, CodexRunPolicy } from "../../codex/codex-cli.js";
+import { formatCodexCommandSource, formatCodexPlatform } from "../../codex/codex-process.js";
 import type { ChannelInstanceRecord, PendingBindingRecord } from "../../state/persistent-state-types.js";
 import { chatCodexTitle } from "../../runtime/package-info.js";
 import type { BindingSummary, SessionChoices } from "../actions/binding-actions.js";
@@ -40,6 +41,7 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
           <Text>还没有配置任何渠道。请先添加微信账号或飞书机器人。</Text>
         </Section>
         <Section title="默认配置">
+          <CodexCliStatusBlock status={dashboard.startup.codexStatus} />
           <KeyValue label="新 session 工作目录" value={dashboard.startup.cwd} />
           <KeyValue label="新 session 权限" value={formatPermission(dashboard.startup.policy)} />
         </Section>
@@ -67,6 +69,9 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
           {dashboard.canStart.ok ? "已准备好。按 Enter 启动 Bridge，并进入运行日志面板。" : dashboard.canStart.message}
         </Text>
         <KeyValue label="启动后" value="显示运行中状态、已启动渠道、工作目录和 Ctrl+C 停止方式" />
+      </Section>
+      <Section title="Codex CLI">
+        <CodexCliStatusBlock status={dashboard.startup.codexStatus} />
       </Section>
       <Section title="操作">
         {rows.map(([label, value], index) => (
@@ -370,6 +375,9 @@ export function WorkdirInputView({ value, onChange, onSubmit }: { value: string;
 export function StatusView({ dashboard }: { dashboard: LauncherDashboard }): React.JSX.Element {
   return (
     <Frame title="状态详情" subtitle="Enter/Esc 返回">
+      <Section title="Codex CLI">
+        <CodexCliStatusBlock status={dashboard.startup.codexStatus} />
+      </Section>
       <Section title="渠道">
         {dashboard.channels.length ? dashboard.channels.map((channel) => (
           <Box key={channel.record.id} flexDirection="column" marginBottom={1}>
@@ -387,6 +395,20 @@ export function StatusView({ dashboard }: { dashboard: LauncherDashboard }): Rea
         <Text>服务未启动。</Text>
       </Section>
     </Frame>
+  );
+}
+
+function CodexCliStatusBlock({ status }: { status?: CodexCliStatus }): React.JSX.Element {
+  const available = status?.available ?? false;
+  return (
+    <>
+      <KeyValue label="平台" value={formatCodexPlatform(status)} />
+      <KeyValue label="状态" value={status ? (available ? "已找到" : "不可用") : "尚未检测"} />
+      {status?.version ? <KeyValue label="版本" value={status.version} /> : null}
+      {status && !available && status.error ? <KeyValue label="错误" value={status.error} /> : null}
+      {status ? <KeyValue label="路径" value={status.codexBin} /> : null}
+      {status ? <KeyValue label="来源" value={formatCodexCommandSource(status.codexBinSource)} /> : null}
+    </>
   );
 }
 

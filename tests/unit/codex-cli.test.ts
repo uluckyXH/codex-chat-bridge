@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildCodexRootArgs, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, formatCodexSessionTitleForDisplay, parseSessionIndexLine, truncateDisplayText } from "../../src/codex/codex-cli.js";
+import { buildCodexRootArgs, checkCodexCli, discoverCodexSessions, displayCodexSessionTitle, findCodexSessionById, formatCodexSessionTitleForDisplay, parseSessionIndexLine, truncateDisplayText } from "../../src/codex/codex-cli.js";
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "codex-cli-test-"));
@@ -18,6 +18,21 @@ test("buildCodexRootArgs maps sandbox and full permission modes to Codex CLI fla
   assert.deepEqual(buildCodexRootArgs({ permissionMode: "full" }), [
     "--dangerously-bypass-approvals-and-sandbox",
   ]);
+});
+
+test("checkCodexCli reports version and resolved command metadata", async () => {
+  const root = tempDir();
+  const fakeBin = path.join(root, "fake-codex");
+  fs.writeFileSync(fakeBin, "#!/bin/sh\necho codex-cli 0.130.0\n");
+  fs.chmodSync(fakeBin, 0o755);
+
+  const status = await checkCodexCli(fakeBin);
+
+  assert.equal(status.available, true);
+  assert.equal(status.codexBin, fakeBin);
+  assert.equal(status.requestedCodexBin, fakeBin);
+  assert.equal(status.codexBinSource, "explicit");
+  assert.equal(status.version, "codex-cli 0.130.0");
 });
 
 test("parseSessionIndexLine reads Codex session index records", () => {

@@ -45,6 +45,7 @@ export interface LauncherDashboard {
 
 export type StartValidation =
   | { ok: true; channels: ManagedChannelSummary[]; message: string }
+  | { ok: false; reason: "codex_unavailable"; message: string }
   | { ok: false; reason: "no_enabled_channels"; message: string }
   | { ok: false; reason: "unavailable_channels"; channels: ManagedChannelSummary[]; message: string };
 
@@ -366,6 +367,9 @@ export class LauncherActions {
   }
 
   validateStart(channels?: ManagedChannelSummary[]): StartValidation {
+    if (this.startup.codexStatus && !this.startup.codexStatus.available) {
+      return { ok: false, reason: "codex_unavailable", message: `Codex CLI 不可用：${this.startup.codexStatus.error ?? "unknown error"}` };
+    }
     const allChannels = channels ?? [];
     const enabled = allChannels.filter((channel) => channel.record.enabled);
     if (enabled.length === 0) {
@@ -446,9 +450,12 @@ export class LauncherActions {
   }
 
   private createRealCodexAdapter(): CodexAdapter {
+    if (this.startup.codexStatus && !this.startup.codexStatus.available) {
+      throw new Error(`Codex 不可用: ${this.startup.codexStatus.error ?? "unknown error"}`);
+    }
     const runPolicy = this.startup.policy;
-    if (this.startup.adapterMode === "exec") return new ExecCodexAdapter({ runPolicy });
-    return new AppServerCodexAdapter({ runPolicy });
+    if (this.startup.adapterMode === "exec") return new ExecCodexAdapter({ runPolicy, codexCommand: this.startup.codexStatus?.command });
+    return new AppServerCodexAdapter({ runPolicy, codexCommand: this.startup.codexStatus?.command });
   }
 
   private weixinPrimaryPendingId(channelId: string, accountId: string): string {

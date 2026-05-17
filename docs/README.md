@@ -55,6 +55,12 @@
 - `compact-command-design.zh-CN.md`
   `/compact` 上下文压缩命令设计。说明微信/飞书聊天侧如何确认并触发当前 route/session 的 Codex 上下文压缩、执行中状态和命令阻断规则。
 
+- `windows-compatibility.zh-CN.md`
+  Windows Codex 接入兼容性设计。说明 Windows 下 Codex CLI 子进程解析、npm shim、`spawn codex ENOENT` 已知问题、`CHAT_CODEX_BIN` 覆盖入口，以及传给 Codex 的本地路径边界。
+
+- `windows-codex-cli-troubleshooting.zh-CN.md`
+  Windows Codex CLI 用户排障指南。说明如何检查 `codex --version`、`where.exe codex`、Chat-Codex 首页的 Codex CLI 状态，以及如何用 `CHAT_CODEX_BIN` 指定 `codex.cmd`。
+
 - `bridge-modularization-design.zh-CN.md`
   Bridge 模块化拆分设计。说明如何在保留现有全部功能的前提下，把当前单体 `bridge.ts` 拆成 command router、session flow、route queue、steering、delivery、status 文案和格式化工具等模块，并要求拆分前保留旧文件对照备份。
 
@@ -127,13 +133,14 @@ secrets/feishu.local.md
 10. 做启动/运行期相关开发时读 `runtime-single-instance-lock.zh-CN.md`，确认重复启动检测、运行锁、心跳和残留锁清理语义。
 11. 做用户可见时间展示相关开发时读 `local-timezone-display-design.zh-CN.md`，确认 UTC 存储、本机时区展示和不提供手动覆盖的边界。
 12. 做 `/compact` 聊天命令时读 `compact-command-design.zh-CN.md`，确认确认流程、当前 route/session 作用域、执行中通知和命令阻断规则。
-13. 做 Bridge 核心拆分时读 `bridge-modularization-design.zh-CN.md`，确认备份旧文件、模块边界、分阶段迁移和行为不变验收标准。
-14. 做 app-server adapter 或 serve 入口拆分时读 `large-core-file-modularization-design.zh-CN.md`，确认原文件改名备份、薄入口、新模块边界和逐模块测试要求。
-15. 读 `cli-interaction-redesign.zh-CN.md`，了解上一轮普通 CLI 重构背景和历史设计。
-16. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
-17. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
-18. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
-19. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
+13. 做 Windows 下 Codex CLI 解析、Codex 子进程启动或传给 Codex 的本地路径适配时读 `windows-compatibility.zh-CN.md`。
+14. 做 Bridge 核心拆分时读 `bridge-modularization-design.zh-CN.md`，确认备份旧文件、模块边界、分阶段迁移和行为不变验收标准。
+15. 做 app-server adapter 或 serve 入口拆分时读 `large-core-file-modularization-design.zh-CN.md`，确认原文件改名备份、薄入口、新模块边界和逐模块测试要求。
+16. 读 `cli-interaction-redesign.zh-CN.md`，了解上一轮普通 CLI 重构背景和历史设计。
+17. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
+18. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
+19. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
+20. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
 
 ## 分阶段工作顺序
 

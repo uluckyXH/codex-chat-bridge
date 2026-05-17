@@ -1,4 +1,6 @@
 import { WeixinAdapter } from "../../channels/weixin/weixin-adapter.js";
+import type { CodexCliStatus } from "../../codex/codex-cli.js";
+import { formatCodexCommandSource, formatCodexPlatform } from "../../codex/codex-process.js";
 import type { ChannelStatus } from "../../protocol/channel.js";
 import { FileStateStore } from "../../state/file-state-store.js";
 import type { ManagedChannelSummary } from "../actions/channel-actions.js";
@@ -14,6 +16,19 @@ export function codexSummary(startup: PreparedServeStartup) {
     progressDisabled: true,
     maxConcurrentTurns: startup.maxConcurrentTurns,
   };
+}
+
+export function formatCodexStatusForCli(status?: CodexCliStatus): string {
+  if (!status) return `平台 ${formatCodexPlatform()}，Codex CLI 尚未检测`;
+  const state = status.available ? "已找到" : "不可用";
+  const version = status.available ? status.version ?? "版本未知" : status.error ?? "unknown error";
+  return [
+    `平台 ${formatCodexPlatform(status)}`,
+    `Codex CLI ${state}`,
+    `版本 ${version}`,
+    `路径 ${status.codexBin}`,
+    `来源 ${formatCodexCommandSource(status.codexBinSource)}`,
+  ].join("；");
 }
 
 export function routeSummary(plan: ServeChannelPlan): ServeRouteSummary {

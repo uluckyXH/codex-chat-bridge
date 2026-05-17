@@ -1,18 +1,26 @@
 import type { Interface } from "node:readline/promises";
 import { checkCodexCli, discoverCodexSessions, findCodexSessionById, formatCodexSessionTitleForDisplay, type CodexRunPolicy, type DiscoveredCodexSession } from "../../codex/codex-cli.js";
+import { formatCodexCommandSource, formatCodexPlatform } from "../../codex/codex-process.js";
 import { resolveNewSessionWorkdir } from "../../codex/workdir.js";
 import type { ChannelStatus } from "../../protocol/channel.js";
 import type { PreparedServeStartup, ServeChannelPlan, ServeStartupOptions } from "../launcher-types.js";
 
-export async function prepareCodexServeStartup(options: ServeStartupOptions, rl?: Interface, display: { quiet?: boolean } = {}): Promise<PreparedServeStartup> {
+export async function prepareCodexServeStartup(
+  options: ServeStartupOptions,
+  rl?: Interface,
+  display: { quiet?: boolean; allowUnavailableCodex?: boolean } = {},
+): Promise<PreparedServeStartup> {
   const status = await checkCodexCli();
-  if (!status.available) {
+  if (!status.available && !display.allowUnavailableCodex) {
     throw new Error(`Codex 不可用: ${status.error ?? "unknown error"}`);
   }
   if (!display.quiet) {
     console.log("");
-    console.log("Codex 已就绪");
-    console.log(`- CLI: ${status.version ?? status.codexBin}`);
+    console.log(status.available ? "Codex 已就绪" : "Codex 不可用");
+    console.log(`- 平台: ${formatCodexPlatform(status)}`);
+    console.log(`- CLI: ${status.available ? status.version ?? status.codexBin : status.error ?? "unknown error"}`);
+    console.log(`- 路径: ${status.codexBin}`);
+    console.log(`- 来源: ${formatCodexCommandSource(status.codexBinSource)}`);
   }
 
   const adapterMode = options.codexAdapter ?? "app-server";
@@ -29,6 +37,7 @@ export async function prepareCodexServeStartup(options: ServeStartupOptions, rl?
     policy,
     adapterMode,
     cwd,
+    codexStatus: status,
     progressMode: options.progressMode,
     maxConcurrentTurns: options.maxConcurrentTurns,
   };

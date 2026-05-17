@@ -3,7 +3,8 @@ import { Box, Text, useInput } from "ink";
 import type { ChannelMedia, ChannelMessage, ChannelTarget } from "../../protocol/channel.js";
 import type { TranscriptSink } from "../../logging/transcript.js";
 import type { Logger } from "../../logging/logger.js";
-import type { CodexRunPolicy } from "../../codex/codex-cli.js";
+import type { CodexCliStatus, CodexRunPolicy } from "../../codex/codex-cli.js";
+import { formatCodexCommandSource, formatCodexPlatform } from "../../codex/codex-process.js";
 import { formatLocalClock } from "../../time/display-time.js";
 import { Frame, KeyValue, Muted, Section, truncate } from "./ui-components.js";
 
@@ -23,6 +24,7 @@ export interface RuntimeLogSummary {
   cwd: string;
   policy: CodexRunPolicy;
   routePolicy: string;
+  codexStatus?: CodexCliStatus;
 }
 
 export class RuntimeLogStore {
@@ -149,6 +151,8 @@ export function RuntimeLogView({ summary, store, interactive = true }: { summary
         </Section>
         <Section title="服务">
           <KeyValue label="渠道" value={summary.channels.length ? summary.channels.join(", ") : "无"} />
+          <KeyValue label="平台" value={formatCodexPlatform(summary.codexStatus)} />
+          <KeyValue label="Codex CLI" value={formatRuntimeCodexStatus(summary.codexStatus)} />
           <KeyValue label="新聊天策略" value={summary.routePolicy} />
           <KeyValue label="默认权限" value={formatPolicy(summary.policy)} />
           <KeyValue label="工作目录" value={summary.cwd} />
@@ -163,6 +167,13 @@ export function RuntimeLogView({ summary, store, interactive = true }: { summary
       </Box>
     </Box>
   );
+}
+
+function formatRuntimeCodexStatus(status?: CodexCliStatus): string {
+  if (!status) return "尚未检测";
+  const state = status.available ? "已找到" : "不可用";
+  const version = status.available ? status.version ?? "版本未知" : status.error ?? "unknown error";
+  return `${state}，${version}，${status.codexBin}，${formatCodexCommandSource(status.codexBinSource)}`;
 }
 
 function RuntimeLogRow({ entry }: { entry: RuntimeLogEntry }): React.JSX.Element {
