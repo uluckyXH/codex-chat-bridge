@@ -46,6 +46,9 @@
 - `tui-core-functionality-followups.zh-CN.md`
   TUI 核心功能完善设计。说明渠道删除、渠道备注、添加时间、禁用/删除绑定语义、session 最近活跃时间和运行期日志完整展示。
 
+- `tui-visual-redesign.zh-CN.md`
+  TUI 视觉重设计方案。说明全屏布局、橙黄主色配色系统、色彩常量、图标系统、各页面线框图、信息面板分区、两栏布局规则、响应式适配和改动文件边界。不涉及按键逻辑或业务逻辑改动。
+
 - `runtime-single-instance-lock.zh-CN.md`
   运行期单实例锁设计。说明如何避免同一个本地状态目录下重复启动多个中间件实例，导致通讯渠道重复消费和状态并发写入。
 
@@ -139,20 +142,21 @@ secrets/feishu.local.md
 7. 读 `cli-core-interaction-design.zh-CN.md`，确认当前 CLI/TUI 首页、渠道配置、微信主聊天绑定和飞书多 chat_id 绑定边界。
 8. 做 TUI 相关开发时读 `ink-tui-interaction-design.zh-CN.md`，确认 Ink 页面、快捷键、状态栏和实现顺序。
 9. 做 TUI 核心功能补齐时读 `tui-core-functionality-followups.zh-CN.md`，确认渠道删除、备注、添加时间、session 活跃时间和运行日志全文展示语义。
-10. 做启动/运行期相关开发时读 `runtime-single-instance-lock.zh-CN.md`，确认重复启动检测、运行锁、心跳和残留锁清理语义。
-11. 做用户可见时间展示相关开发时读 `local-timezone-display-design.zh-CN.md`，确认 UTC 存储、本机时区展示和不提供手动覆盖的边界。
-12. 做 `/compact` 聊天命令时读 `compact-command-design.zh-CN.md`，确认确认流程、当前 route/session 作用域、执行中通知和命令阻断规则。
-13. 做 `/sessions`、`/session`、`/sessions all`、`/resume` 或 `/use` 会话列表/选择交互时读 `session-list-pagination-design.zh-CN.md`。
-14. 做 Codex 进度投递、命令输出摘要或 TUI 运行日志刷屏治理时读 `progress-noise-control-design.zh-CN.md`。
-15. 做微信/飞书新聊天配对、route 信任、未授权聊天拦截或信任持久化时读 `route-pairing-trust-design.zh-CN.md`。
-16. 做 Windows 下 Codex CLI 解析、Codex 子进程启动或传给 Codex 的本地路径适配时读 `windows-compatibility.zh-CN.md`。
-17. 做 Bridge 核心拆分时读 `bridge-modularization-design.zh-CN.md`，确认备份旧文件、模块边界、分阶段迁移和行为不变验收标准。
-18. 做 app-server adapter 或 serve 入口拆分时读 `large-core-file-modularization-design.zh-CN.md`，确认原文件改名备份、薄入口、新模块边界和逐模块测试要求。
-19. 读 `cli-interaction-redesign.zh-CN.md`，了解上一轮普通 CLI 重构背景和历史设计。
-20. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
-21. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
-22. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
-23. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
+10. 做 TUI 视觉样式重设计时读 `tui-visual-redesign.zh-CN.md`，确认配色系统、全屏布局、各页面线框图和图标规范，不修改按键逻辑。
+11. 做启动/运行期相关开发时读 `runtime-single-instance-lock.zh-CN.md`，确认重复启动检测、运行锁、心跳和残留锁清理语义。
+12. 做用户可见时间展示相关开发时读 `local-timezone-display-design.zh-CN.md`，确认 UTC 存储、本机时区展示和不提供手动覆盖的边界。
+13. 做 `/compact` 聊天命令时读 `compact-command-design.zh-CN.md`，确认确认流程、当前 route/session 作用域、执行中通知和命令阻断规则。
+14. 做 `/sessions`、`/session`、`/sessions all`、`/resume` 或 `/use` 会话列表/选择交互时读 `session-list-pagination-design.zh-CN.md`。
+15. 做 Codex 进度投递、命令输出摘要或 TUI 运行日志刷屏治理时读 `progress-noise-control-design.zh-CN.md`。
+16. 做微信/飞书新聊天配对、route 信任、未授权聊天拦截或信任持久化时读 `route-pairing-trust-design.zh-CN.md`。
+17. 做 Windows 下 Codex CLI 解析、Codex 子进程启动或传给 Codex 的本地路径适配时读 `windows-compatibility.zh-CN.md`。
+18. 做 Bridge 核心拆分时读 `bridge-modularization-design.zh-CN.md`，确认备份旧文件、模块边界、分阶段迁移和行为不变验收标准。
+19. 做 app-server adapter 或 serve 入口拆分时读 `large-core-file-modularization-design.zh-CN.md`，确认原文件改名备份、薄入口、新模块边界和逐模块测试要求。
+20. 读 `cli-interaction-redesign.zh-CN.md`，了解上一轮普通 CLI 重构背景和历史设计。
+21. 读 `development-and-test.zh-CN.md`，确认开发和测试报告要求。
+22. 读 `git-management.zh-CN.md`，确认提交边界和忽略规则。
+23. Agent 继续读 `agent-guide.zh-CN.md`，确认执行规范。
+24. 需要 Codex 协议或微信插件源码细节时，先读 `../references/README.md`，按里面的说明拉取本地参考源码。
 
 ## 分阶段工作顺序
 

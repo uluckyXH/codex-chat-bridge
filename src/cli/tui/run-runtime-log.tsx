@@ -3,7 +3,10 @@ import { render, type RenderOptions } from "ink";
 import { RuntimeLogView, type RuntimeLogStore, type RuntimeLogSummary } from "./runtime-log.js";
 
 export async function runRuntimeLogTui(summary: RuntimeLogSummary, store: RuntimeLogStore, renderOptions: RenderOptions = {}): Promise<void> {
-  const instance = render(<RuntimeLogView summary={summary} store={store} interactive={renderOptions.interactive !== false} />, renderOptions);
+  const instance = render(
+    <RuntimeLogView summary={summary} store={store} interactive={renderOptions.interactive !== false} />,
+    { alternateScreen: true, ...renderOptions },
+  );
   const stop = (): void => {
     instance.unmount();
   };

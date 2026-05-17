@@ -13,6 +13,7 @@ export async function runChatCodexTui(actions: LauncherActions): Promise<ChatCod
         result = nextResult;
       }}
     />,
+    { alternateScreen: true },
   );
   await instance.waitUntilExit();
   return result;

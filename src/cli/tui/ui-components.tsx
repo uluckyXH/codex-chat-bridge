@@ -1,18 +1,56 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
 import type { SelectableSessionChoice, SessionDisplay } from "../actions/binding-actions.js";
 import { formatSessionActiveTime } from "../actions/binding-actions.js";
 import type { Flash, Screen } from "./types.js";
 
+// ─── Theme ───────────────────────────────────────────────────────────────────
+
+export const THEME = {
+  brand:        "#FF8C00",  // 品牌主色：橙色，边框、标题
+  gold:         "#FFD700",  // 金色：分区标题、活跃光标 ❯
+  activeText:   "#FFA500",  // 活跃橙：选中列表项文字
+  success:      "#52C41A",  // 绿色：已连接、成功
+  warning:      "#FAAD14",  // 琥珀色：待配置、警告
+  danger:       "#FF4D4F",  // 红色：错误、失败
+  dangerBright: "#FF7875",  // 亮红：破坏性操作
+  inbound:      "#69B1FF",  // 蓝色：入站消息日志
+  outbound:     "#95DE64",  // 亮绿：出站消息日志
+  progressLog:  "#FFD666",  // 亮黄：进度日志
+  media:        "#36CFC9",  // 青色：媒体日志
+  muted:        "#888888",  // 深灰：次要文字、快捷键提示
+} as const;
+
 const FIELD_WIDTH = 22;
 
-export function Frame({ title, subtitle, children, borderColor = "cyan" }: { title: string; subtitle?: string; children: React.ReactNode; borderColor?: string }): React.JSX.Element {
+// ─── Layout helpers ───────────────────────────────────────────────────────────
+
+function useTermWidth(): number {
+  const { stdout } = useStdout();
+  return stdout.columns ?? 80;
+}
+
+// ─── Core components ──────────────────────────────────────────────────────────
+
+export function Frame({
+  title,
+  subtitle,
+  children,
+  borderColor = THEME.brand,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+  borderColor?: string;
+}): React.JSX.Element {
+  const termWidth = useTermWidth();
+  const frameWidth = Math.max(60, termWidth - 2);
   return (
-    <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column" width={92}>
+    <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column" width={frameWidth}>
       <Box justifyContent="space-between">
-        <Text bold color={borderColor}>{title}</Text>
-        {subtitle ? <Text color="gray">{subtitle}</Text> : null}
+        <Text bold color={borderColor}>◈ {title}</Text>
+        {subtitle ? <Text color={THEME.muted}>{subtitle}</Text> : null}
       </Box>
       <Box marginTop={1} flexDirection="column">{children}</Box>
     </Box>
@@ -20,51 +58,111 @@ export function Frame({ title, subtitle, children, borderColor = "cyan" }: { tit
 }
 
 export function Section({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
+  const termWidth = useTermWidth();
+  const dividerWidth = Math.max(20, termWidth - 8);
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text bold color="blue">{title}</Text>
+      <Text bold color={THEME.gold}>{title}</Text>
+      <Text color={THEME.muted}>{"─".repeat(dividerWidth)}</Text>
       {children}
     </Box>
   );
 }
 
-export function ListRow({ active, left, right, tone }: { active: boolean; left: string; right?: string; tone?: "default" | "primary" | "success" | "warning" | "danger" | "muted" }): React.JSX.Element {
-  const color = rowColor(active, tone);
+export function ListRow({
+  active,
+  left,
+  right,
+  tone,
+}: {
+  active: boolean;
+  left: string;
+  right?: string;
+  tone?: "default" | "primary" | "success" | "warning" | "danger" | "muted";
+}): React.JSX.Element {
+  const termWidth = useTermWidth();
+  // Reserve 4 for border+padding, 2 for cursor, dynamic right column
   const rightWidth = right?.includes("最近") ? 40 : 32;
-  const leftWidth = right?.includes("最近") ? 44 : 54;
+  const leftWidth = Math.max(20, termWidth - rightWidth - 10);
+  const textColor = active ? THEME.activeText : rowToneColor(tone);
   return (
     <Box>
-      <Text color={color} bold={active || tone === "primary" || tone === "success"}>{active ? "> " : "  "}{padRight(truncate(left, leftWidth - 2), leftWidth)}</Text>
-      {right ? <Text color={color}>{truncate(right, rightWidth)}</Text> : null}
+      <Text color={THEME.gold} bold>{active ? "❯ " : "  "}</Text>
+      <Text color={textColor} bold={active || tone === "primary" || tone === "success"}>
+        {padRight(truncate(left, leftWidth - 2), leftWidth)}
+      </Text>
+      {right ? (
+        <Text color={active ? THEME.muted : rowToneColor(tone) ?? THEME.muted}>
+          {truncate(right, rightWidth)}
+        </Text>
+      ) : null}
     </Box>
   );
 }
 
-export function SessionRow({ active, index, session }: { active: boolean; index: number; session: SelectableSessionChoice }): React.JSX.Element {
-  return <ListRow active={active} left={`${index + 1}. ${session.current ? "当前" : "可用"}   ${session.title ?? session.id}`} right={`${session.shortId}  最近 ${formatSessionActiveTime(session.updatedAt)}`} />;
+export function SessionRow({
+  active,
+  index,
+  session,
+}: {
+  active: boolean;
+  index: number;
+  session: SelectableSessionChoice;
+}): React.JSX.Element {
+  return (
+    <ListRow
+      active={active}
+      left={`${index + 1}. ${session.current ? "当前" : "可用"}   ${session.title ?? session.id}`}
+      right={`${session.shortId}  最近 ${formatSessionActiveTime(session.updatedAt)}`}
+    />
+  );
 }
 
 export function KeyValue({ label, value }: { label: string; value: string }): React.JSX.Element {
-  return <Text><Text color="gray">{padRight(truncate(label, FIELD_WIDTH), FIELD_WIDTH)}</Text>  {truncate(value, 66)}</Text>;
+  return (
+    <Text>
+      <Text color={THEME.muted}>{padRight(truncate(label, FIELD_WIDTH), FIELD_WIDTH)}</Text>
+      {"  "}
+      <Text>{value}</Text>
+    </Text>
+  );
 }
 
-export function Footer({ loading, flash, screen, context }: { loading: boolean; flash: Flash; screen: Screen["name"]; context?: "firstRun" | "emptyChannels" }): React.JSX.Element {
-  const color = flash.kind === "error" ? "red" : flash.kind === "success" ? "green" : "gray";
+export function Footer({
+  loading,
+  flash,
+  screen,
+  context,
+}: {
+  loading: boolean;
+  flash: Flash;
+  screen: Screen["name"];
+  context?: "firstRun" | "emptyChannels";
+}): React.JSX.Element {
+  const icon = flash.kind === "error" ? "✗ " : flash.kind === "success" ? "✓ " : "● ";
+  const color = loading ? THEME.warning : flash.kind === "error" ? THEME.danger : flash.kind === "success" ? THEME.success : THEME.muted;
+  const message = loading ? "⏳ 处理中..." : `${icon}${flash.message}`;
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text color={loading ? "yellow" : color}>{loading ? "处理中..." : flash.message}</Text>
-      <Text color="gray">{footerHint(screen, context)}</Text>
+      <Text color={color} bold={flash.kind !== "info" && !loading}>{message}</Text>
+      <Text color={THEME.muted}>{footerHint(screen, context)}</Text>
     </Box>
   );
 }
 
 export function ConfirmBar({ message }: { message: string }): React.JSX.Element {
-  return <Box marginTop={1}><Text color="yellow">{message}</Text></Box>;
+  return (
+    <Box marginTop={1}>
+      <Text color={THEME.warning} bold>⚠ {message}</Text>
+    </Box>
+  );
 }
 
 export function Muted({ text }: { text: string }): React.JSX.Element {
-  return <Text color="gray">{text}</Text>;
+  return <Text color={THEME.muted}>{text}</Text>;
 }
+
+// ─── Format helpers ───────────────────────────────────────────────────────────
 
 export function formatSession(session: SessionDisplay): string {
   return `${session.title ?? session.id} / ${session.shortId}`;
@@ -80,28 +178,30 @@ export function formatPermission(policy: CodexRunPolicy): string {
 }
 
 export function channelStatus(state: string): string {
-  if (state === "connected") return "已连接";
-  if (state === "login_required") return "需要配置";
-  if (state === "failed") return "异常";
-  if (state === "stopped") return "已停止";
+  if (state === "connected") return "✓ 已连接";
+  if (state === "login_required") return "⚠ 需要配置";
+  if (state === "failed") return "✗ 异常";
+  if (state === "stopped") return "— 已停止";
   return state;
 }
 
 export function statusColor(state: string): string {
-  if (state === "connected") return "green";
-  if (state === "login_required") return "yellow";
-  if (state === "failed") return "red";
-  if (state === "stopped") return "gray";
-  return "cyan";
+  if (state === "connected") return THEME.success;
+  if (state === "login_required") return THEME.warning;
+  if (state === "failed") return THEME.danger;
+  if (state === "stopped") return THEME.muted;
+  return THEME.brand;
 }
 
-function rowColor(active: boolean, tone: "default" | "primary" | "success" | "warning" | "danger" | "muted" = "default"): string | undefined {
-  if (tone === "primary") return active ? "cyanBright" : "cyan";
-  if (tone === "success") return active ? "greenBright" : "green";
-  if (tone === "warning") return active ? "yellowBright" : "yellow";
-  if (tone === "danger") return active ? "redBright" : "red";
-  if (tone === "muted") return "gray";
-  return active ? "cyan" : undefined;
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+function rowToneColor(tone: "default" | "primary" | "success" | "warning" | "danger" | "muted" = "default"): string | undefined {
+  if (tone === "primary") return THEME.brand;
+  if (tone === "success") return THEME.success;
+  if (tone === "warning") return THEME.warning;
+  if (tone === "danger") return THEME.dangerBright;
+  if (tone === "muted") return THEME.muted;
+  return undefined;
 }
 
 export function truncate(value: string, width: number): string {
@@ -127,7 +227,7 @@ function footerHint(screen: Screen["name"], context?: "firstRun" | "emptyChannel
   if (screen === "permission") return "↑↓ 选择  Enter 保存  完全权限需确认  Esc 返回";
   if (screen === "workdir") return "↑↓ 选择  Enter 保存  1/d 当前目录  2/m 输入路径  Esc 返回";
   if (screen === "workdirInput") return "输入后 Enter 保存  Esc 返回";
-  if (screen === "startConfirm") return "Enter 启动服务  Esc 返回  q 返回";
+  if (screen === "startConfirm") return "Enter 启动服务  Esc / q 返回";
   return "↑↓ 选择  Enter 执行  Esc 返回  q 返回";
 }
 

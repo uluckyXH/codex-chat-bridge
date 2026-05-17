@@ -23,6 +23,7 @@ import {
   Section,
   SessionRow,
   statusColor,
+  THEME,
   truncate,
 } from "./ui-components.js";
 
@@ -63,10 +64,10 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
     ["6. 启动服务", dashboard.canStart.ok ? "启动并进入运行日志" : "需处理配置"],
   ];
   return (
-    <Frame title={chatCodexTitle()} subtitle={`状态: ${dashboard.canStart.ok ? "可启动" : "需配置"}  权限: ${dashboard.startup.policy.permissionMode === "full" ? "完全" : "审批"}`} borderColor={dashboard.canStart.ok ? "green" : "yellow"}>
+    <Frame title={chatCodexTitle()} subtitle={`状态: ${dashboard.canStart.ok ? "可启动" : "需配置"}  权限: ${dashboard.startup.policy.permissionMode === "full" ? "完全" : "审批"}`} borderColor={dashboard.canStart.ok ? THEME.success : THEME.warning}>
       <Section title="启动服务">
-        <Text color={dashboard.canStart.ok ? "green" : "yellow"} bold>
-          {dashboard.canStart.ok ? "已准备好。按 Enter 启动 Bridge，并进入运行日志面板。" : dashboard.canStart.message}
+        <Text color={dashboard.canStart.ok ? THEME.success : THEME.warning} bold>
+          {dashboard.canStart.ok ? "▶ 已准备好。按 Enter 启动 Bridge，并进入运行日志面板。" : `⚠ ${dashboard.canStart.message}`}
         </Text>
         <KeyValue label="启动后" value="显示运行中状态、已启动渠道、工作目录和 Ctrl+C 停止方式" />
       </Section>
@@ -153,6 +154,7 @@ export function ChannelsView({ channels, selected, channelCursor = 0 }: { channe
             active={selected === actionOffset + index}
             left={`${actionOffset + index + 1}. ${label}`}
             right={value}
+            tone={label === "删除选中渠道" ? "danger" : undefined}
           />
         ))}
       </Section>
@@ -177,7 +179,7 @@ export function ChannelDetailView({ channel, selected }: { channel?: LauncherDas
       <KeyValue label="更新时间" value={formatFullDateTime(channel.record.updatedAt)} />
       {channel.status.lastError ? <KeyValue label="最近错误" value={channel.status.lastError} /> : null}
       <Section title="操作">
-        {items.map((item, index) => <ListRow key={item} active={selected === index} left={`${index + 1}. ${item}`} />)}
+        {items.map((item, index) => <ListRow key={item} active={selected === index} left={`${index + 1}. ${item}`} tone={item.startsWith("删除") ? "danger" : undefined} />)}
       </Section>
     </Frame>
   );
@@ -294,7 +296,7 @@ export function BindingDetailView({ binding, selected }: { binding?: BindingSumm
       {binding.activeSession?.cwd ? <KeyValue label="工作目录" value={binding.activeSession.cwd} /> : null}
       {binding.route.lastSeenAt ? <KeyValue label="最近消息" value={binding.route.lastSeenAt} /> : null}
       <Section title="操作">
-        {items.map((item, index) => <ListRow key={item} active={selected === index} left={`${index + 1}. ${item}`} />)}
+        {items.map((item, index) => <ListRow key={item} active={selected === index} left={`${index + 1}. ${item}`} tone={item.startsWith("解绑") ? "warning" : undefined} />)}
       </Section>
     </Frame>
   );
@@ -337,8 +339,8 @@ export function PermissionView({ target, startupPolicy, sessionPolicy, selected 
       {target.kind === "session" ? <KeyValue label="Session" value={formatSession(target.session)} /> : null}
       <KeyValue label="当前" value={formatPermission(current)} />
       <Section title="选项">
-        <ListRow active={selected === 0} left="1. 审批模式（推荐）" />
-        <ListRow active={selected === 1} left="2. 完全权限（高风险）" />
+        <ListRow active={selected === 0} left="1. 审批模式（推荐）" tone="success" />
+        <ListRow active={selected === 1} left="2. 完全权限（高风险）" tone="danger" />
       </Section>
     </Frame>
   );
@@ -403,7 +405,7 @@ function CodexCliStatusBlock({ status }: { status?: CodexCliStatus }): React.JSX
   return (
     <>
       <KeyValue label="平台" value={formatCodexPlatform(status)} />
-      <KeyValue label="状态" value={status ? (available ? "已找到" : "不可用") : "尚未检测"} />
+      <KeyValue label="状态" value={status ? (available ? "✓ 已找到" : "✗ 不可用") : "尚未检测"} />
       {status?.version ? <KeyValue label="版本" value={status.version} /> : null}
       {status && !available && status.error ? <KeyValue label="错误" value={status.error} /> : null}
       {status ? <KeyValue label="路径" value={status.codexBin} /> : null}
@@ -415,9 +417,9 @@ function CodexCliStatusBlock({ status }: { status?: CodexCliStatus }): React.JSX
 export function StartConfirmView({ validation, lines }: { validation: StartValidation; lines: string[] }): React.JSX.Element {
   const groups = parseStartSummary(lines);
   return (
-    <Frame title="启动服务" subtitle={validation.ok ? "Enter 启动并进入运行日志  Esc 返回" : "Esc 返回"} borderColor={validation.ok ? "green" : "yellow"}>
+    <Frame title="启动服务" subtitle={validation.ok ? "Enter 启动并进入运行日志  Esc 返回" : "Esc 返回"} borderColor={validation.ok ? THEME.success : THEME.warning}>
       <Section title={validation.ok ? "确认启动" : "需要处理"}>
-        <Text color={validation.ok ? "green" : "yellow"} bold>{validation.ok ? "确认后会启动 Bridge，并进入 Chat Codex 运行中面板。" : lines[0]}</Text>
+        <Text color={validation.ok ? THEME.success : THEME.warning} bold>{validation.ok ? "▶ 确认后会启动 Bridge，并进入 Chat Codex 运行中面板。" : `⚠ ${lines[0]}`}</Text>
         {validation.ok ? <KeyValue label="运行中面板" value="展示已启动渠道、工作目录、默认权限、聊天日志和 Ctrl+C 停止方式" /> : null}
       </Section>
       {validation.ok ? groups.map((group) => (

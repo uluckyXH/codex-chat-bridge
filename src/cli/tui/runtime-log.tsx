@@ -6,7 +6,7 @@ import type { Logger } from "../../logging/logger.js";
 import type { CodexCliStatus, CodexRunPolicy } from "../../codex/codex-cli.js";
 import { formatCodexCommandSource, formatCodexPlatform } from "../../codex/codex-process.js";
 import { formatLocalClock } from "../../time/display-time.js";
-import { Frame, KeyValue, Muted, Section, truncate } from "./ui-components.js";
+import { Frame, KeyValue, Muted, Section, THEME } from "./ui-components.js";
 
 export type RuntimeLogKind = "system" | "inbound" | "outbound" | "progress" | "media" | "error";
 
@@ -145,9 +145,9 @@ export function RuntimeLogView({ summary, store, interactive = true }: { summary
   }, [logs, scrollOffset]);
   return (
     <Box flexDirection="column">
-      <Frame title={summary.title} subtitle="已启动  Ctrl+C 停止" borderColor="green">
+      <Frame title={summary.title} subtitle="已启动  Ctrl+C 停止" borderColor={THEME.success}>
         <Section title="运行状态">
-          <Text color="green" bold>Chat Codex 已启动，正在等待微信 / 飞书消息。</Text>
+          <Text color={THEME.success} bold>▶ Chat Codex 已启动，正在等待微信 / 飞书消息。</Text>
         </Section>
         <Section title="服务">
           <KeyValue label="渠道" value={summary.channels.length ? summary.channels.join(", ") : "无"} />
@@ -162,8 +162,8 @@ export function RuntimeLogView({ summary, store, interactive = true }: { summary
         </Section>
       </Frame>
       <Box marginTop={1} flexDirection="column">
-        <Text color="gray">等待微信 / 飞书消息。收到消息、回复、进度和媒体发送都会在这里追加。</Text>
-        <Text color="gray">↑↓ 滚动  PgUp/PgDn 翻页  End 最新  c 清屏  Ctrl+C 停止服务</Text>
+        <Text color={THEME.muted}>等待微信 / 飞书消息。收到消息、回复、进度和媒体发送都会在这里追加。</Text>
+        <Text color={THEME.muted}>↑↓ 滚动  PgUp/PgDn 翻页  End 最新  c 清屏  Ctrl+C 停止服务</Text>
       </Box>
     </Box>
   );
@@ -178,17 +178,19 @@ function formatRuntimeCodexStatus(status?: CodexCliStatus): string {
 
 function RuntimeLogRow({ entry }: { entry: RuntimeLogEntry }): React.JSX.Element {
   const color = entry.kind === "error"
-    ? "red"
+    ? THEME.danger
     : entry.kind === "inbound"
-      ? "cyan"
+      ? THEME.inbound
       : entry.kind === "outbound"
-        ? "green"
+        ? THEME.outbound
         : entry.kind === "progress"
-          ? "yellow"
-          : "gray";
+          ? THEME.progressLog
+          : entry.kind === "media"
+            ? THEME.media
+            : THEME.muted;
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color={color}>{formatLocalClock(entry.time)}  {kindLabel(entry.kind)}  {truncate(entry.source, 48)}</Text>
+      <Text color={color}>{formatLocalClock(entry.time)}  {kindLabel(entry.kind)}  {entry.source}</Text>
       {(entry.message.trim() || "空消息").split(/\r?\n/).map((line, index) => <Text key={index} wrap="wrap">  {line}</Text>)}
     </Box>
   );
@@ -210,11 +212,11 @@ function channelLabel(channelId: string): string {
 }
 
 function displaySender(message: ChannelMessage): string {
-  return truncate(message.sender.displayName ?? message.sender.id, 32);
+  return message.sender.displayName ?? message.sender.id;
 }
 
 function formatConversation(target: ChannelTarget): string {
-  return `${target.conversation.kind}:${truncate(target.conversation.id, 28)}`;
+  return `${target.conversation.kind}:${target.conversation.id}`;
 }
 
 function formatPolicy(policy: CodexRunPolicy): string {
