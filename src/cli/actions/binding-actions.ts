@@ -22,6 +22,7 @@ export interface BindingActionsOptions {
 export interface BindingSummary {
   route: RouteRecord;
   label: string;
+  trusted?: boolean;
   activeSession?: SessionDisplay;
   permission?: CodexRunPolicy;
 }
@@ -282,6 +283,7 @@ export class BindingActions {
     return {
       route,
       label: formatRouteLabel(route),
+      trusted: this.state.isRouteTrusted(route.routeKey),
       activeSession,
       permission: route.activeSessionId ? this.getSessionPermission(route.activeSessionId) : undefined,
     };

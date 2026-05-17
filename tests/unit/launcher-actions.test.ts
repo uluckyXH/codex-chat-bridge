@@ -6,6 +6,7 @@ import path from "node:path";
 import { LauncherActions } from "../../src/cli/actions/launcher-actions.js";
 import { ChannelActions } from "../../src/cli/actions/channel-actions.js";
 import { resolveCodexCommand } from "../../src/codex/codex-process.js";
+import { FileStateStore } from "../../src/state/file-state-store.js";
 import { ChannelConfigStore } from "../../src/state/channel-config-store.js";
 
 test("LauncherActions requires a Feishu account label before probing credentials", async () => {
@@ -60,4 +61,63 @@ test("LauncherActions blocks startup when Codex CLI is unavailable", () => {
   assert.equal(validation.ok, false);
   assert.equal(validation.reason, "codex_unavailable");
   assert.match(validation.message, /Codex CLI 不可用/);
+});
+
+test("LauncherActions manages route trust and optional session unbind", async () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-actions-"));
+  const bridgeDir = path.join(baseDir, "state", "bridge");
+  const store = new FileStateStore({ rootDir: bridgeDir });
+  const routeKey = "feishu-default:default:direct:oc_pairing";
+  store.recordRouteMessage({
+    id: "message-1",
+    routeKey,
+    channelId: "feishu-default",
+    accountId: "default",
+    sender: { id: "ou_pairing", displayName: "张三" },
+    conversation: { id: "oc_pairing", kind: "direct", displayName: "张三" },
+    text: "hello",
+    timestamp: "2026-05-18T00:00:00.000Z",
+  });
+  store.bindSession(routeKey, {
+    id: "session-pairing",
+    cwd: baseDir,
+    title: "pairing test",
+    createdAt: "2026-05-18T00:00:00.000Z",
+  });
+  const actions = new LauncherActions(
+    {
+      adapterMode: "app-server",
+      cwd: baseDir,
+      policy: { permissionMode: "approval", sandbox: "workspace-write" },
+    },
+    { unboundRoutePolicy: "auto_new" },
+    new ChannelActions({
+      configStore: new ChannelConfigStore({ bridgeDir }),
+      env: {},
+    }),
+  );
+
+  let dashboard = await actions.getDashboard();
+  assert.equal(dashboard.pairing.pending, 1);
+  assert.equal(dashboard.pairing.trusted, 0);
+  assert.equal(dashboard.bindings[0]?.trusted, false);
+
+  const trusted = actions.trustRouteManually(routeKey);
+  assert.equal(trusted.ok, true);
+  assert.equal(trusted.route.trusted, true);
+  assert.equal(trusted.route.trustedRecord?.trustMethod, "manual");
+
+  dashboard = await actions.getDashboard();
+  assert.equal(dashboard.pairing.pending, 0);
+  assert.equal(dashboard.pairing.trusted, 1);
+  assert.equal(dashboard.bindings[0]?.trusted, true);
+
+  const revoked = actions.revokeRouteTrust(routeKey, { unbindSession: true });
+  assert.equal(revoked.ok, true);
+  assert.match(revoked.message, /解绑 session/);
+
+  const reloaded = new FileStateStore({ rootDir: bridgeDir });
+  assert.equal(reloaded.isRouteTrusted(routeKey), false);
+  assert.equal(reloaded.getBinding(routeKey), undefined);
+  assert.equal(reloaded.listRoutes()[0]?.activeSessionId, undefined);
 });

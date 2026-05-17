@@ -8,7 +8,7 @@ import { chatCodexTitle } from "../../runtime/package-info.js";
 import type { BindingSummary, SessionChoices } from "../actions/binding-actions.js";
 import { formatSessionActiveTime } from "../actions/binding-actions.js";
 import { channelDisplayName, formatFullDateTime, formatManagedChannelLabel, formatShortDateTime } from "../actions/channel-actions.js";
-import type { LauncherDashboard, StartValidation } from "../actions/launcher-actions.js";
+import type { LauncherDashboard, PairingDashboardSummary, PairingRouteSummary, StartValidation } from "../actions/launcher-actions.js";
 import { formatChannelStatusDetails } from "../serve-wizard.js";
 import type { PermissionTarget, Screen, SessionTarget } from "./types.js";
 import {
@@ -61,10 +61,11 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
   const rows = [
     ["1. 管理渠道", `${dashboard.channels.length} 个渠道`],
     ["2. 聊天绑定", `${dashboard.routes.bound}/${dashboard.routes.known} 已绑定，${dashboard.routes.pending ?? 0} 个待生效`],
-    ["3. 权限设置", formatPermission(dashboard.startup.policy)],
-    ["4. 工作目录", dashboard.startup.cwd],
-    ["5. 状态详情", "查看渠道和绑定明细"],
-    ["6. 启动服务", dashboard.canStart.ok ? "启动并进入运行日志" : "需处理配置"],
+    ["3. 配对管理", `${dashboard.pairing.trusted} 个已配对，${dashboard.pairing.pending} 个待配对`],
+    ["4. 权限设置", formatPermission(dashboard.startup.policy)],
+    ["5. 工作目录", dashboard.startup.cwd],
+    ["6. 状态详情", "查看渠道和绑定明细"],
+    ["7. 启动服务", dashboard.canStart.ok ? "启动并进入运行日志" : "需处理配置"],
   ];
   return (
     <Frame title={chatCodexTitle()} subtitle={`状态: ${dashboard.canStart.ok ? "可启动" : "需配置"}  权限: ${dashboard.startup.policy.permissionMode === "full" ? "完全" : "审批"}`} borderColor={dashboard.canStart.ok ? THEME.success : THEME.warning}>
@@ -84,7 +85,7 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
             active={selected === index}
             left={label}
             right={value}
-            tone={index === 5 ? (dashboard.canStart.ok ? "success" : "warning") : undefined}
+            tone={index === 6 ? (dashboard.canStart.ok ? "success" : "warning") : undefined}
           />
         ))}
       </Section>
@@ -99,6 +100,9 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
       </Section>
       <Section title="聊天绑定">
         <Text>已发现 {dashboard.routes.known} 个聊天，已绑定 {dashboard.routes.bound} 个 session，待生效 {dashboard.routes.pending ?? 0} 个。</Text>
+      </Section>
+      <Section title="配对信任">
+        <Text>已信任 {dashboard.pairing.trusted} 个聊天，待配对 {dashboard.pairing.pending} 个聊天。</Text>
       </Section>
       <Section title="工作目录">
         <KeyValue label="新 session" value={dashboard.startup.cwd} />
@@ -280,8 +284,18 @@ export function BindingsView({ bindings, pendingBindings, selected }: { bindings
   // fixed: Frame(4) + footer(2) + padding(2) = 8
   const viewportRows = useViewportRows(8);
   const allItems = [
-    ...bindings.map((b, i) => ({ key: b.route.routeKey, label: `${i + 1}. ${b.label}`, right: b.activeSession ? formatSessionWithActivity(b.activeSession) : "未绑定" })),
-    ...pendingBindings.map((p, i) => ({ key: p.id, label: `${bindings.length + i + 1}. ${p.label ?? p.id}`, right: p.binding.type === "existing" ? `待生效: ${p.binding.sessionId.slice(0, 8)}` : "待生效: 新 session" })),
+    ...bindings.map((b, i) => ({
+      key: b.route.routeKey,
+      label: `${i + 1}. ${b.label}`,
+      right: b.trusted === false ? "待配对，暂不能绑定" : b.activeSession ? formatSessionWithActivity(b.activeSession) : "未绑定",
+      tone: b.trusted === false ? "warning" as const : undefined,
+    })),
+    ...pendingBindings.map((p, i) => ({
+      key: p.id,
+      label: `${bindings.length + i + 1}. ${p.label ?? p.id}`,
+      right: p.binding.type === "existing" ? `待生效: ${p.binding.sessionId.slice(0, 8)}` : "待生效: 新 session",
+      tone: undefined,
+    })),
   ];
   const bw = visibleWindow(allItems, selected, viewportRows);
   return (
@@ -292,7 +306,7 @@ export function BindingsView({ bindings, pendingBindings, selected }: { bindings
           <>
             <ScrollHint above={bw.above} below={0} />
             {bw.slice.map((item, i) => (
-              <ListRow key={item.key} active={selected === bw.startIndex + i} left={item.label} right={item.right} />
+              <ListRow key={item.key} active={selected === bw.startIndex + i} left={item.label} right={item.right} tone={item.tone} />
             ))}
             <ScrollHint above={0} below={bw.below} />
           </>
@@ -303,6 +317,22 @@ export function BindingsView({ bindings, pendingBindings, selected }: { bindings
 
 export function BindingDetailView({ binding, selected }: { binding?: BindingSummary; selected: number }): React.JSX.Element {
   if (!binding) return <Frame title="绑定详情"><Muted text="这个聊天记录已经不存在。" /></Frame>;
+  if (binding.trusted === false) {
+    return (
+      <Frame title="绑定详情" subtitle="Enter 前往配对详情  Esc 返回" borderColor={THEME.warning}>
+        <KeyValue label="聊天" value={binding.label} />
+        <KeyValue label="配对状态" value="待配对" />
+        <KeyValue label="当前 session" value={binding.activeSession ? formatSession(binding.activeSession) : "未绑定"} />
+        <Section title="说明">
+          <Muted text="这个聊天还没有完成 Chat-Codex 配对，暂不能绑定、切换或新建 session。" />
+        </Section>
+        <Section title="操作">
+          <ListRow active={selected === 0} left="1. 前往配对详情" right="本机确认信任或等待聊天发送配对码" tone="warning" />
+          <ListRow active={selected === 1} left="2. 返回" />
+        </Section>
+      </Frame>
+    );
+  }
   const items = [
     "选择已有 session",
     "新建并绑定 session",
@@ -319,6 +349,89 @@ export function BindingDetailView({ binding, selected }: { binding?: BindingSumm
       {binding.route.lastSeenAt ? <KeyValue label="最近消息" value={binding.route.lastSeenAt} /> : null}
       <Section title="操作">
         {items.map((item, index) => <ListRow key={item} active={selected === index} left={`${index + 1}. ${item}`} tone={item.startsWith("解绑") ? "warning" : undefined} />)}
+      </Section>
+    </Frame>
+  );
+}
+
+export function PairingView({ pairing, selected }: { pairing: PairingDashboardSummary; selected: number }): React.JSX.Element {
+  // fixed: Frame(4) + summary section(4) + description section(4) + footer(2) = 14
+  const viewportRows = useViewportRows(14);
+  const routes = pairing.routes;
+  const pw = visibleWindow(routes, selected, viewportRows);
+  return (
+    <Frame title="配对管理" subtitle="Enter 详情  m 手动信任  r 撤销信任  u 撤销并解绑">
+      <Section title="概览">
+        <Text>已信任 {pairing.trusted} 个聊天，待配对 {pairing.pending} 个聊天。</Text>
+      </Section>
+      <Section title="聊天">
+        {routes.length === 0 ? <Muted text="还没有发现任何聊天。启动服务后，微信或飞书私聊发来消息才会出现在这里。" /> : (
+          <>
+            <ScrollHint above={pw.above} below={0} />
+            {pw.slice.map((route, i) => {
+              const index = pw.startIndex + i;
+              return (
+                <ListRow
+                  key={route.route.routeKey}
+                  active={selected === index}
+                  left={`${index + 1}. ${route.trusted ? "已信任" : "待配对"}   ${route.label}`}
+                  right={pairingRouteRight(route)}
+                  tone={route.trusted ? "success" : "warning"}
+                />
+              );
+            })}
+            <ScrollHint above={0} below={pw.below} />
+          </>
+        )}
+      </Section>
+      <Section title="说明">
+        <Muted text="配对码只会在运行日志里显示，不会发送到微信或飞书；启动前 TUI 只管理已发现 route 的信任记录。" />
+      </Section>
+    </Frame>
+  );
+}
+
+export function PairingDetailView({ pairing, selected }: { pairing?: PairingRouteSummary; selected: number }): React.JSX.Element {
+  if (!pairing) return <Frame title="配对详情"><Muted text="这个聊天 route 已不存在。" /></Frame>;
+  const trusted = pairing.trustedRecord;
+  const items = pairing.trusted
+    ? [
+        "撤销信任，保留 session 绑定",
+        pairing.activeSession ? "撤销信任，并解绑 session" : "撤销信任，并解绑 session（当前未绑定）",
+        "返回配对管理",
+      ]
+    : [
+        "本机确认并信任",
+        "返回配对管理",
+      ];
+  return (
+    <Frame title="配对详情" subtitle={pairing.trusted ? "r 撤销信任  u 撤销并解绑  Esc 返回" : "m 手动信任  Esc 返回"} borderColor={pairing.trusted ? THEME.success : THEME.warning}>
+      <KeyValue label="聊天" value={pairing.label} />
+      <KeyValue label="状态" value={pairing.trusted ? "已信任" : "待配对"} />
+      <KeyValue label="Route" value={pairing.route.routeKey} />
+      <KeyValue label="渠道" value={`${pairing.route.channelId} / ${pairing.route.accountId}`} />
+      <KeyValue label="最近活跃" value={formatFullDateTime(pairing.route.lastSeenAt ?? pairing.route.updatedAt)} />
+      <KeyValue label="当前绑定" value={pairing.activeSession ? formatSession(pairing.activeSession) : "未绑定"} />
+      {trusted ? (
+        <Section title="信任记录">
+          <KeyValue label="信任时间" value={formatFullDateTime(trusted.trustedAt)} />
+          <KeyValue label="信任方式" value={trusted.trustMethod === "manual" ? "本机手动信任" : "配对码"} />
+          <KeyValue label="信任人" value={[trusted.trustedBySenderId, trusted.trustedBySenderDisplayName].filter(Boolean).join(" / ")} />
+        </Section>
+      ) : (
+        <Section title="说明">
+          <Muted text="待配对聊天不能创建、绑定或切换 Codex session；可以等待对方发送 /pair 配对码，或在本机手动确认信任。" />
+        </Section>
+      )}
+      <Section title="操作">
+        {items.map((item, index) => (
+          <ListRow
+            key={item}
+            active={selected === index}
+            left={`${index + 1}. ${item}`}
+            tone={item.startsWith("撤销") ? "danger" : item.startsWith("本机") ? "warning" : undefined}
+          />
+        ))}
       </Section>
     </Frame>
   );
@@ -422,6 +535,9 @@ export function StatusView({ dashboard }: { dashboard: LauncherDashboard }): Rea
       <Section title="绑定">
         <Text>已发现聊天：{dashboard.routes.known}  已绑定：{dashboard.routes.bound}  待生效：{dashboard.routes.pending ?? 0}</Text>
       </Section>
+      <Section title="配对信任">
+        <Text>已信任：{dashboard.pairing.trusted}  待配对：{dashboard.pairing.pending}</Text>
+      </Section>
       <Section title="运行">
         <Text>服务未启动。</Text>
       </Section>
@@ -468,9 +584,10 @@ export function HelpView(): React.JSX.Element {
     <Frame title="快捷键" subtitle="Enter/Esc 返回">
       {[
         "全局: ↑↓ 选择，Enter 执行，Esc/q 返回，r 刷新，? 帮助。",
-        "首页: c 渠道，b 绑定，p 权限，d 工作目录，s 状态，w 添加微信，f 添加飞书。",
+        "首页: c 渠道，b 绑定，t 配对，p 权限，d 工作目录，s 状态，w 添加微信，f 添加飞书。",
         "渠道: w 添加微信，f 添加飞书，e 启停。",
         "绑定: n 新建并绑定，m 手动绑定，u 解绑，p 权限。",
+        "配对: m 手动信任，r 撤销信任，u 撤销信任并解绑。",
       ].map((line) => <Text key={line}>{line}</Text>)}
     </Frame>
   );
@@ -514,4 +631,9 @@ function splitSummaryItem(item: string): [string, string | undefined] {
   const index = item.indexOf(": ");
   if (index < 0) return [item, undefined];
   return [item.slice(0, index), item.slice(index + 2)];
+}
+
+function pairingRouteRight(route: PairingRouteSummary): string {
+  if (route.trustedRecord) return `配对 ${formatShortDateTime(route.trustedRecord.trustedAt)}`;
+  return `最近 ${formatShortDateTime(route.route.lastSeenAt ?? route.route.updatedAt)}`;
 }

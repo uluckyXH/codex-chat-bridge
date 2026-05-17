@@ -217,10 +217,12 @@ export function padRight(value: string, width: number): string {
 function footerHint(screen: Screen["name"], context?: "firstRun" | "emptyChannels"): string {
   if (context === "firstRun") return "↑↓ 选择  Enter 执行  1/w 微信  2/f 飞书  3/p 权限  4/d 工作目录  0/q 退出";
   if (context === "emptyChannels") return "↑↓ 选择  Enter 执行  1/w 微信  2/f 飞书  Esc/q 返回";
-  if (screen === "home") return "↑↓ 选择  Enter 执行  w 微信  f 飞书  c 渠道  b 绑定  p 权限  d 目录  q 退出";
+  if (screen === "home") return "↑↓ 选择  Enter 执行  w 微信  f 飞书  c 渠道  b 绑定  t 配对  p 权限  d 目录  q 退出";
   if (screen === "channels") return "↑↓ 选择  Enter 执行  w 微信  f 飞书  e 启停  Esc 返回";
   if (screen === "channelRename") return "输入后 Enter 保存；留空清除备注  Esc 返回";
   if (screen === "bindings") return "↑↓ 选择  Enter 详情  n 新建  m 手动绑定  u 解绑  p 权限  Esc 返回";
+  if (screen === "pairing") return "↑↓ 选择  Enter 详情  m 手动信任  r 撤销信任  u 撤销并解绑  Esc 返回";
+  if (screen === "pairingDetail") return "↑↓ 选择  Enter 执行  m 手动信任  r 撤销信任  u 撤销并解绑  Esc 返回";
   if (screen === "addWeixin") return "Enter 获取/检查二维码  Esc 返回";
   if (screen === "addFeishu") return "输入后 Enter 下一步  Secret 不回显  Esc 返回";
   if (screen === "sessionSelect") return "↑↓ 选择  Enter 绑定  数字直选  n 新建  m 手动输入  Esc 返回";

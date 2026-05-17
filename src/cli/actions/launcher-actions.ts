@@ -15,7 +15,7 @@ import { checkNewSessionWorkdir, resolveNewSessionWorkdir } from "../../codex/wo
 import type { ChannelLoginResult } from "../../protocol/channel.js";
 import { FileStateStore } from "../../state/file-state-store.js";
 import { pendingBindingOwnerRouteKey } from "../../state/memory-state-store.js";
-import type { ChannelInstanceRecord, PendingBindingRecord } from "../../state/persistent-state-types.js";
+import type { ChannelInstanceRecord, PendingBindingRecord, RouteRecord, TrustedRouteRecord } from "../../state/persistent-state-types.js";
 import type { PreparedServeStartup, ServeChannelPlan } from "../launcher-types.js";
 import { formatChannelStateForUser, formatPermissionModeForUser, type ServeRouteSummary } from "../serve-wizard.js";
 import {
@@ -38,9 +38,24 @@ export interface LauncherDashboard {
   channels: ManagedChannelSummary[];
   bindings: BindingSummary[];
   pendingBindings: PendingBindingRecord[];
+  pairing: PairingDashboardSummary;
   routes: ServeRouteSummary;
   startup: PreparedServeStartup;
   canStart: StartValidation;
+}
+
+export interface PairingDashboardSummary {
+  trusted: number;
+  pending: number;
+  routes: PairingRouteSummary[];
+}
+
+export interface PairingRouteSummary {
+  route: RouteRecord;
+  label: string;
+  trusted: boolean;
+  trustedRecord?: TrustedRouteRecord;
+  activeSession?: SessionDisplay;
 }
 
 export type StartValidation =
@@ -73,6 +88,10 @@ export type WorkdirSetupResult =
   | { ok: true; cwd: string; created: boolean; message: string }
   | { ok: false; reason: "missing" | "not_directory" | "error"; cwd?: string; message: string };
 
+export type PairingManageResult =
+  | { ok: true; route: PairingRouteSummary; message: string }
+  | { ok: false; reason: "not_found" | "not_trusted" | "error"; message: string };
+
 export class LauncherActions {
   private weixinLogin?: {
     channel: WeixinAdapter;
@@ -102,6 +121,7 @@ export class LauncherActions {
       channels,
       bindings,
       pendingBindings: state.listPendingBindings(),
+      pairing: this.pairingSummary(state, bindings),
       routes: this.routeSummary(state),
       startup: this.startup,
       canStart: this.validateStart(channels),
@@ -248,6 +268,72 @@ export class LauncherActions {
 
   unbindSession(routeKey: string): UnbindSessionResult {
     return this.bindingActions().unbindSession(routeKey);
+  }
+
+  getPairingRoute(routeKey: string): PairingRouteSummary | undefined {
+    const state = this.stateStore();
+    return this.pairingSummary(state, this.bindingActions().listBindings()).routes.find((route) => route.route.routeKey === routeKey);
+  }
+
+  trustRouteManually(routeKey: string): PairingManageResult {
+    try {
+      const state = this.stateStore();
+      const route = state.listRoutes().find((item) => item.routeKey === routeKey);
+      if (!route) {
+        return { ok: false, reason: "not_found", message: "没有找到这个聊天 route。请刷新后重试。" };
+      }
+      const now = new Date().toISOString();
+      state.trustRoute({
+        routeKey: route.routeKey,
+        channelId: route.channelId,
+        accountId: route.accountId,
+        conversationKind: route.conversationKind,
+        conversationId: route.conversationId,
+        displayName: route.displayName ?? route.identity?.lastSenderDisplayName,
+        trustedAt: now,
+        trustedBySenderId: "local-tui",
+        trustedBySenderDisplayName: "本机 TUI",
+        trustMethod: "manual",
+        lastSeenAt: route.lastSeenAt,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const summary = this.getPairingRoute(routeKey);
+      if (!summary) {
+        return { ok: false, reason: "not_found", message: "已写入信任，但刷新配对列表失败。请返回后刷新。" };
+      }
+      return { ok: true, route: summary, message: `已手动信任：${summary.label}` };
+    } catch (error) {
+      return { ok: false, reason: "error", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  revokeRouteTrust(routeKey: string, options: { unbindSession?: boolean } = {}): PairingManageResult {
+    try {
+      const state = this.stateStore();
+      const route = state.listRoutes().find((item) => item.routeKey === routeKey);
+      const removed = state.revokeRouteTrust(routeKey);
+      if (!removed) {
+        return { ok: false, reason: "not_trusted", message: "这个聊天 route 当前没有信任记录。" };
+      }
+      let releasedSessionId: string | undefined;
+      if (options.unbindSession) {
+        const unbound = state.unbindSession(routeKey);
+        if (unbound.ok) releasedSessionId = unbound.binding.sessionId;
+      }
+      const summary = route
+        ? this.getPairingRoute(routeKey) ?? this.pairingRouteSummary(state, route, undefined, new Map())
+        : undefined;
+      if (!summary) {
+        return { ok: true, route: this.fallbackPairingRoute(removed), message: "已撤销信任。" };
+      }
+      const suffix = options.unbindSession
+        ? releasedSessionId ? `，并解绑 session：${releasedSessionId}` : "，当前没有需要解绑的 session"
+        : "，session 绑定保持不变";
+      return { ok: true, route: summary, message: `已撤销信任：${summary.label}${suffix}。` };
+    } catch (error) {
+      return { ok: false, reason: "error", message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   getSessionPermission(sessionId: string): CodexRunPolicy | undefined {
@@ -441,6 +527,60 @@ export class LauncherActions {
     };
   }
 
+  private pairingSummary(state: FileStateStore, bindings: BindingSummary[]): PairingDashboardSummary {
+    const activeSessions = new Map(bindings.map((binding) => [binding.route.routeKey, binding.activeSession]));
+    const trustedRoutes = new Map(state.listTrustedRoutes().map((route) => [route.routeKey, route]));
+    const routes = state.listRoutes()
+      .map((route) => this.pairingRouteSummary(state, route, trustedRoutes.get(route.routeKey), activeSessions))
+      .sort(comparePairingRoutes);
+    return {
+      trusted: routes.filter((route) => route.trusted).length,
+      pending: routes.filter((route) => !route.trusted).length,
+      routes,
+    };
+  }
+
+  private pairingRouteSummary(
+    state: FileStateStore,
+    route: RouteRecord,
+    trustedRecord: TrustedRouteRecord | undefined,
+    activeSessions: Map<string, SessionDisplay | undefined>,
+  ): PairingRouteSummary {
+    const binding = state.getBinding(route.routeKey);
+    const activeSession = activeSessions.get(route.routeKey) ?? (route.activeSessionId || binding
+      ? {
+          id: route.activeSessionId ?? binding?.sessionId ?? "",
+          shortId: shortSessionId(route.activeSessionId ?? binding?.sessionId ?? ""),
+        }
+      : undefined);
+    return {
+      route,
+      label: formatRouteLabel(route),
+      trusted: Boolean(trustedRecord),
+      trustedRecord,
+      activeSession,
+    };
+  }
+
+  private fallbackPairingRoute(record: TrustedRouteRecord): PairingRouteSummary {
+    const route: RouteRecord = {
+      routeKey: record.routeKey,
+      channelId: record.channelId,
+      accountId: record.accountId,
+      conversationKind: record.conversationKind,
+      conversationId: record.conversationId,
+      displayName: record.displayName,
+      lastSeenAt: record.lastSeenAt,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+    return {
+      route,
+      label: formatRouteLabel(route),
+      trusted: false,
+    };
+  }
+
   private bindingActions(sessionLimit?: number): BindingActions {
     return new BindingActions(this.stateStore(), { cwd: this.startup.cwd, sessionLimit });
   }
@@ -478,6 +618,24 @@ export class LauncherActions {
       timestamp: new Date().toISOString(),
     };
   }
+}
+
+function comparePairingRoutes(left: PairingRouteSummary, right: PairingRouteSummary): number {
+  if (left.trusted !== right.trusted) return left.trusted ? 1 : -1;
+  return timestampForPairing(right) - timestampForPairing(left)
+    || left.label.localeCompare(right.label, "zh-Hans-CN")
+    || left.route.routeKey.localeCompare(right.route.routeKey);
+}
+
+function timestampForPairing(route: PairingRouteSummary): number {
+  const value = route.trustedRecord?.trustedAt ?? route.route.lastSeenAt ?? route.route.updatedAt;
+  const timestamp = Date.parse(value ?? "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function shortSessionId(sessionId: string): string {
+  if (sessionId.length <= 8) return sessionId;
+  return sessionId.slice(0, 8);
 }
 
 async function renderQrCode(text: string): Promise<string | undefined> {

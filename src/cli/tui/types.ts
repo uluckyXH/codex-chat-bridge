@@ -22,6 +22,8 @@ export type Screen =
   | { name: "addFeishu"; step: FeishuInputStep; values: Partial<FeishuCredentials> }
   | { name: "bindings" }
   | { name: "bindingDetail"; routeKey: string }
+  | { name: "pairing" }
+  | { name: "pairingDetail"; routeKey: string }
   | { name: "sessionSelect"; target: SessionTarget }
   | { name: "manualSession"; target: SessionTarget }
   | { name: "permission"; target: PermissionTarget }

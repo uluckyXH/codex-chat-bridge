@@ -29,6 +29,7 @@ test("Ink TUI renders dashboard and navigates to core pages", async () => {
   assert.match(cleanFrame(view), /darwin arm64/);
   assert.match(cleanFrame(view), /渠道/);
   assert.match(cleanFrame(view), /聊天绑定/);
+  assert.match(cleanFrame(view), /配对管理/);
   assert.match(cleanFrame(view), /权限/);
   assert.match(cleanFrame(view), /工作目录/);
   assert.match(cleanFrame(view), /\/repo/);
@@ -49,6 +50,14 @@ test("Ink TUI renders dashboard and navigates to core pages", async () => {
   assert.match(cleanFrame(view), /飞书 \/ default \/ 张三/);
   assert.match(cleanFrame(view), /微信 \/ wx-main \/ 主聊天/);
   assert.match(cleanFrame(view), /待生效/);
+
+  view.stdin.write("\u001B");
+  await waitForInk();
+  view.stdin.write("t");
+  await waitForInk();
+  assert.match(cleanFrame(view), /配对管理/);
+  assert.match(cleanFrame(view), /待配对/);
+  assert.match(cleanFrame(view), /已信任/);
 
   view.stdin.write("\u001B");
   await waitForInk();
@@ -351,6 +360,87 @@ test("Ink TUI shows session last active time in binding views", async () => {
   view.unmount();
 });
 
+test("Ink TUI manages route pairing trust and blocks untrusted binding actions", async () => {
+  const dashboard = dashboardFixture();
+  let manuallyTrusted = "";
+  let revoked: { routeKey: string; unbindSession: boolean | undefined } | undefined;
+  const view = render(<ChatCodexTui actions={mockActions(dashboard, {
+    trustRouteManually: (routeKey) => {
+      manuallyTrusted = routeKey;
+      const route = dashboard.pairing.routes.find((item) => item.route.routeKey === routeKey);
+      assert.ok(route);
+      route.trusted = true;
+      route.trustedRecord = {
+        routeKey,
+        channelId: route.route.channelId,
+        accountId: route.route.accountId,
+        conversationKind: route.route.conversationKind,
+        conversationId: route.route.conversationId,
+        displayName: route.route.displayName,
+        trustedAt: "2026-05-18T00:00:00.000Z",
+        trustedBySenderId: "local-tui",
+        trustedBySenderDisplayName: "本机 TUI",
+        trustMethod: "manual",
+        lastSeenAt: route.route.lastSeenAt,
+        createdAt: "2026-05-18T00:00:00.000Z",
+        updatedAt: "2026-05-18T00:00:00.000Z",
+      };
+      dashboard.pairing.pending -= 1;
+      dashboard.pairing.trusted += 1;
+      const binding = dashboard.bindings.find((item) => item.route.routeKey === routeKey);
+      if (binding) binding.trusted = true;
+      return { ok: true, route, message: `已手动信任：${route.label}` };
+    },
+    revokeRouteTrust: (routeKey, options) => {
+      revoked = { routeKey, unbindSession: options?.unbindSession };
+      const route = dashboard.pairing.routes.find((item) => item.route.routeKey === routeKey);
+      assert.ok(route);
+      route.trusted = false;
+      route.trustedRecord = undefined;
+      dashboard.pairing.pending += 1;
+      dashboard.pairing.trusted -= 1;
+      const binding = dashboard.bindings.find((item) => item.route.routeKey === routeKey);
+      if (binding) binding.trusted = false;
+      return { ok: true, route, message: `已撤销信任：${route.label}` };
+    },
+  })} onDone={() => undefined} />);
+  await waitForInk();
+
+  view.stdin.write("b");
+  await waitForInk();
+  assert.match(cleanFrame(view), /待配对，暂不能绑定/);
+
+  view.stdin.write("\u001B[B");
+  await waitForInk();
+  view.stdin.write("n");
+  await waitForInk();
+  assert.match(cleanFrame(view), /还没有完成配对/);
+
+  view.stdin.write("\u001B");
+  await waitForInk();
+  view.stdin.write("t");
+  await waitForInk();
+  assert.match(cleanFrame(view), /配对管理/);
+  assert.match(cleanFrame(view), /飞书 \/ default \/ 李四/);
+
+  view.stdin.write("m");
+  await waitForInk();
+  assert.match(cleanFrame(view), /确认手动信任/);
+  view.stdin.write("y");
+  await waitForInk();
+  assert.equal(manuallyTrusted, "feishu-default:default:direct:oc_pending");
+  assert.match(cleanFrame(view), /本机手动信任/);
+
+  view.stdin.write("r");
+  await waitForInk();
+  assert.match(cleanFrame(view), /确认撤销/);
+  view.stdin.write("y");
+  await waitForInk();
+  assert.deepEqual(revoked, { routeKey: "feishu-default:default:direct:oc_pending", unbindSession: false });
+
+  view.unmount();
+});
+
 test("Runtime TUI keeps full log messages and caps store at 300 entries", async () => {
   const store = new RuntimeLogStore();
   const longMessage = "这是一条很长的运行日志，用于确认运行期 TUI 不再把正文截断成省略号，而是完整交给终端自动换行展示。full-log-message-tail";
@@ -441,6 +531,8 @@ function mockActions(
   dashboard: LauncherDashboard,
   overrides: {
     addFeishuBot?: (input: { appId?: string; appSecret?: string; domain?: string; accountId?: string }) => Promise<unknown>;
+    trustRouteManually?: (routeKey: string) => unknown;
+    revokeRouteTrust?: (routeKey: string, options?: { unbindSession?: boolean }) => unknown;
   } = {},
 ): LauncherActions {
   return {
@@ -448,6 +540,15 @@ function mockActions(
     getStartup: () => dashboard.startup,
     getPlan: () => ({ unboundRoutePolicy: "auto_new" }),
     getBinding: (routeKey: string) => dashboard.bindings.find((binding) => binding.route.routeKey === routeKey),
+    getPairingRoute: (routeKey: string) => dashboard.pairing.routes.find((route) => route.route.routeKey === routeKey),
+    trustRouteManually: overrides.trustRouteManually ?? ((routeKey: string) => {
+      const route = dashboard.pairing.routes.find((item) => item.route.routeKey === routeKey);
+      return route ? { ok: true, route, message: `已手动信任：${route.label}` } : { ok: false, reason: "not_found", message: "没有找到这个聊天 route。" };
+    }),
+    revokeRouteTrust: overrides.revokeRouteTrust ?? ((routeKey: string) => {
+      const route = dashboard.pairing.routes.find((item) => item.route.routeKey === routeKey);
+      return route ? { ok: true, route, message: `已撤销信任：${route.label}` } : { ok: false, reason: "not_found", message: "没有找到这个聊天 route。" };
+    }),
     startWeixinLogin: async () => ({
       started: {
         state: "login_required",
@@ -536,6 +637,24 @@ function dashboardFixture(): LauncherDashboard {
         updatedAt: "2026-05-16T00:00:00.000Z",
       },
       label: "飞书 / default / 张三",
+      trusted: true,
+    }, {
+      route: {
+        routeKey: "feishu-default:default:direct:oc_pending",
+        channelId: "feishu-default",
+        channelType: "feishu",
+        accountId: "default",
+        conversationKind: "direct",
+        conversationId: "oc_pending",
+        identity: {
+          lastSenderDisplayName: "李四",
+        },
+        lastSeenAt: "2026-05-17T00:00:00.000Z",
+        createdAt: "2026-05-17T00:00:00.000Z",
+        updatedAt: "2026-05-17T00:00:00.000Z",
+      },
+      label: "飞书 / default / 李四",
+      trusted: false,
     }],
     pendingBindings: [{
       id: "weixin-primary-weixin-wx-main-wx-main",
@@ -548,7 +667,7 @@ function dashboardFixture(): LauncherDashboard {
       updatedAt: "2026-05-16T00:00:00.000Z",
     }],
     routes: {
-      known: 1,
+      known: 2,
       bound: 0,
       pending: 0,
       unboundPolicy: "auto_new",
@@ -562,6 +681,11 @@ function dashboardFixture(): LauncherDashboard {
       },
       codexStatus: codexStatusFixture(),
     },
+    pairing: {
+      trusted: 1,
+      pending: 1,
+      routes: [],
+    },
     canStart: {
       ok: true,
       channels: [],
@@ -573,6 +697,27 @@ function dashboardFixture(): LauncherDashboard {
     channels: dashboard.channels,
     message: "可以启动服务。",
   };
+  dashboard.pairing.routes = dashboard.bindings.map((binding) => ({
+    route: binding.route,
+    label: binding.label,
+    trusted: binding.trusted !== false,
+    trustedRecord: binding.trusted === false ? undefined : {
+      routeKey: binding.route.routeKey,
+      channelId: binding.route.channelId,
+      accountId: binding.route.accountId,
+      conversationKind: binding.route.conversationKind,
+      conversationId: binding.route.conversationId,
+      displayName: binding.route.displayName,
+      trustedAt: "2026-05-16T00:00:00.000Z",
+      trustedBySenderId: "ou_abc",
+      trustedBySenderDisplayName: "张三",
+      trustMethod: "pairing_code" as const,
+      lastSeenAt: binding.route.lastSeenAt,
+      createdAt: "2026-05-16T00:00:00.000Z",
+      updatedAt: "2026-05-16T00:00:00.000Z",
+    },
+    activeSession: binding.activeSession,
+  })).sort((left, right) => Number(left.trusted) - Number(right.trusted));
   return dashboard;
 }
 
@@ -607,6 +752,11 @@ function emptyDashboardFixture(): LauncherDashboard {
       bound: 0,
       pending: 0,
       unboundPolicy: "auto_new",
+    },
+    pairing: {
+      trusted: 0,
+      pending: 0,
+      routes: [],
     },
     canStart: {
       ok: false,

@@ -9,6 +9,7 @@ import {
   feishuCredentialDefaults,
   type FeishuBotSetupResult,
   type LauncherDashboard,
+  type PairingRouteSummary,
 } from "../actions/launcher-actions.js";
 import type { ChatCodexTuiProps, Flash, PermissionTarget, Screen, SessionTarget } from "./types.js";
 import { screenChannelId, screenIs } from "./types.js";
@@ -25,6 +26,8 @@ import {
   HomeView,
   LoadingView,
   ManualSessionView,
+  PairingDetailView,
+  PairingView,
   PermissionView,
   SessionSelectView,
   StartConfirmView,
@@ -48,6 +51,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
   const channels = dashboard?.channels ?? [];
   const bindings = dashboard?.bindings ?? [];
   const pendingBindings = dashboard?.pendingBindings ?? [];
+  const pairings = dashboard?.pairing.routes ?? [];
 
   const refresh = async (message?: string): Promise<void> => {
     setLoading(true);
@@ -66,7 +70,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
   }, []);
 
   useEffect(() => {
-    setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 5 : 0);
+    setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 6 : 0);
     setConfirm(undefined);
     setManualValue("");
   }, [screen.name, dashboard?.channels.length]);
@@ -91,12 +95,18 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
   const currentBinding = screen.name === "bindingDetail"
     ? actions.getBinding(screen.routeKey)
     : undefined;
+  const currentPairing = screen.name === "pairingDetail"
+    ? pairings.find((item) => item.route.routeKey === screen.routeKey) ?? actions.getPairingRoute(screen.routeKey)
+    : undefined;
   const getMaxSelectableIndex = (): number => {
     if (screen.name === "sessionSelect") return Math.max(0, getSessionChoices(screen.target).selectable.length - 1);
     if (screen.name === "weixinBinding") {
       const channel = channels.find((item) => item.record.id === screen.channelId)?.record;
       return Math.max(0, (channel ? actions.listWeixinPrimaryChoices(channel)?.selectable.length ?? 0 : 0) - 1);
     }
+    if (screen.name === "pairing") return Math.max(0, pairings.length - 1);
+    if (screen.name === "pairingDetail") return currentPairing?.trusted ? 2 : 1;
+    if (screen.name === "bindingDetail" && currentBinding?.trusted === false) return 1;
     return maxSelectableIndex(screen, channels, bindingItems.length);
   };
 
@@ -178,6 +188,10 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "bindings" });
       return;
     }
+    if (screen.name === "pairingDetail") {
+      setScreen({ name: "pairing" });
+      return;
+    }
     if (screen.name === "workdirInput") {
       setScreen({ name: "workdir" });
       return;
@@ -207,7 +221,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "help" });
       return;
     }
-    if (input === "r") {
+    if (input === "r" && screen.name !== "pairing" && screen.name !== "pairingDetail") {
       void refresh("已刷新。");
       return;
     }
@@ -230,6 +244,8 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     else if (screen.name === "weixinBinding") void handleWeixinBindingInput(input, key.return);
     else if (screen.name === "bindings") void handleBindingsInput(input, key.return);
     else if (screen.name === "bindingDetail" && currentBinding) void handleBindingDetailInput(input, key.return, currentBinding);
+    else if (screen.name === "pairing") void handlePairingInput(input, key.return);
+    else if (screen.name === "pairingDetail" && currentPairing) void handlePairingDetailInput(input, key.return, currentPairing);
     else if (screen.name === "sessionSelect") void handleSessionSelectInput(input, key.return);
     else if (screen.name === "permission") void handlePermissionInput(input, key.return, screen.target);
     else if (screen.name === "workdir") void handleWorkdirInput(input, key.return);
@@ -239,7 +255,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
 
   const handleHomeInput = (input: string, enter: boolean): void => {
     const noChannels = channels.length === 0;
-    const picked = numericPick(input, noChannels ? 4 : 6);
+    const picked = numericPick(input, noChannels ? 4 : 7);
     const actionIndex = picked ?? selected;
     const actionRequested = enter || picked !== undefined;
     if (input === "0") {
@@ -258,11 +274,15 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "addFeishu", step: "appId", values: feishuCredentialDefaults() });
       return;
     }
-    if (input === "p" || (actionIndex === 2 && actionRequested)) {
+    if (input === "t" || (!noChannels && actionIndex === 2 && actionRequested)) {
+      setScreen({ name: "pairing" });
+      return;
+    }
+    if (input === "p" || (noChannels ? actionIndex === 2 : actionIndex === 3) && actionRequested) {
       setScreen({ name: "permission", target: { kind: "default" } });
       return;
     }
-    if (input === "d" || (actionIndex === 3 && actionRequested)) {
+    if (input === "d" || (noChannels ? actionIndex === 3 : actionIndex === 4) && actionRequested) {
       setScreen({ name: "workdir" });
       return;
     }
@@ -274,11 +294,11 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       setScreen({ name: "bindings" });
       return;
     }
-    if (input === "s" || (!noChannels && actionIndex === 4 && actionRequested)) {
+    if (input === "s" || (!noChannels && actionIndex === 5 && actionRequested)) {
       setScreen({ name: "status" });
       return;
     }
-    if (enter || (!noChannels && actionIndex === 5 && picked !== undefined)) openNeedsAttention();
+    if (enter || (!noChannels && actionIndex === 6 && picked !== undefined)) openNeedsAttention();
   };
 
   const handleChannelsInput = async (input: string, enter: boolean): Promise<void> => {
@@ -433,6 +453,14 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
       return;
     }
     const binding = item.binding;
+    if (binding.trusted === false) {
+      if (enter || picked !== undefined) {
+        setScreen({ name: "pairingDetail", routeKey: binding.route.routeKey });
+      } else if (input === "n" || input === "m" || input === "u" || input === "p") {
+        setFlash({ kind: "error", message: "这个聊天还没有完成配对，暂不能绑定或修改 session。请先到“配对管理”完成信任。" });
+      }
+      return;
+    }
     if (input === "n") {
       await createAndBind(binding.route.routeKey);
       return;
@@ -475,7 +503,58 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     }
   };
 
+  const handlePairingInput = async (input: string, enter: boolean): Promise<void> => {
+    const picked = numericPick(input, pairings.length);
+    const pairing = pairings[picked ?? selected];
+    if (!pairing) return;
+    if (input === "m" && !pairing.trusted) {
+      confirmManualTrust(pairing);
+      return;
+    }
+    if (input === "r" && pairing.trusted) {
+      confirmRevokeTrust(pairing, false);
+      return;
+    }
+    if (input === "u" && pairing.trusted) {
+      confirmRevokeTrust(pairing, true);
+      return;
+    }
+    if (enter || picked !== undefined) setScreen({ name: "pairingDetail", routeKey: pairing.route.routeKey });
+  };
+
+  const handlePairingDetailInput = async (input: string, enter: boolean, pairing: PairingRouteSummary): Promise<void> => {
+    if (pairing.trusted) {
+      const picked = numericPick(input, 3);
+      const actionIndex = picked ?? selected;
+      if (input === "r" || ((enter || picked !== undefined) && actionIndex === 0)) {
+        confirmRevokeTrust(pairing, false);
+        return;
+      }
+      if (input === "u" || ((enter || picked !== undefined) && actionIndex === 1)) {
+        confirmRevokeTrust(pairing, true);
+        return;
+      }
+      if ((enter || picked !== undefined) && actionIndex === 2) setScreen({ name: "pairing" });
+      return;
+    }
+    const picked = numericPick(input, 2);
+    const actionIndex = picked ?? selected;
+    if (input === "m" || ((enter || picked !== undefined) && actionIndex === 0)) {
+      confirmManualTrust(pairing);
+      return;
+    }
+    if ((enter || picked !== undefined) && actionIndex === 1) setScreen({ name: "pairing" });
+  };
+
   const handleBindingDetailInput = async (input: string, enter: boolean, binding: BindingSummary): Promise<void> => {
+    if (binding.trusted === false) {
+      const picked = numericPick(input, 2);
+      const actionIndex = picked ?? selected;
+      if (!enter && picked === undefined) return;
+      if (actionIndex === 0) setScreen({ name: "pairingDetail", routeKey: binding.route.routeKey });
+      else setScreen({ name: "bindings" });
+      return;
+    }
     const picked = numericPick(input, 4);
     if (!enter && picked === undefined) return;
     const actionIndex = picked ?? selected;
@@ -656,6 +735,34 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     });
   };
 
+  const confirmManualTrust = (pairing: PairingRouteSummary): void => {
+    setConfirm({
+      message: `确认手动信任 ${pairing.label}？该聊天之后可以使用 Chat-Codex。按 y 确认，按 n 取消。`,
+      yes: async () => {
+        const result = actions.trustRouteManually(pairing.route.routeKey);
+        setConfirm(undefined);
+        setFlash({ kind: result.ok ? "success" : "error", message: result.message });
+        await refresh();
+        if (result.ok) setScreen({ name: "pairingDetail", routeKey: result.route.route.routeKey });
+      },
+    });
+  };
+
+  const confirmRevokeTrust = (pairing: PairingRouteSummary, unbindSession: boolean): void => {
+    setConfirm({
+      message: unbindSession
+        ? `确认撤销 ${pairing.label} 的信任并解绑当前 session？Codex session 不会删除。按 y 确认，按 n 取消。`
+        : `确认撤销 ${pairing.label} 的信任？session 绑定会保留。按 y 确认，按 n 取消。`,
+      yes: async () => {
+        const result = actions.revokeRouteTrust(pairing.route.routeKey, { unbindSession });
+        setConfirm(undefined);
+        setFlash({ kind: result.ok ? "success" : "error", message: result.message });
+        await refresh();
+        if (result.ok) setScreen({ name: "pairingDetail", routeKey: result.route.route.routeKey });
+      },
+    });
+  };
+
   const bindSessionTarget = async (target: SessionTarget, sessionId: string): Promise<void> => {
     if (target.kind === "weixinPrimary") {
       const channel = channels.find((item) => item.record.id === target.channelId)?.record;
@@ -690,6 +797,8 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     if (screen.name === "addFeishu") return <AddFeishuView screen={screen} onSubmit={submitFeishuValue} />;
     if (screen.name === "bindings") return <BindingsView bindings={bindings} pendingBindings={pendingBindings} selected={selected} />;
     if (screen.name === "bindingDetail") return <BindingDetailView binding={currentBinding} selected={selected} />;
+    if (screen.name === "pairing") return <PairingView pairing={dashboard.pairing} selected={selected} />;
+    if (screen.name === "pairingDetail") return <PairingDetailView pairing={currentPairing} selected={selected} />;
     if (screen.name === "sessionSelect") return <SessionSelectView target={screen.target} choices={getSessionChoices(screen.target)} selected={selected} binding={screen.target.kind === "route" ? actions.getBinding(screen.target.routeKey) : undefined} />;
     if (screen.name === "manualSession") return <ManualSessionView value={manualValue} onChange={setManualValue} onSubmit={async (value) => {
       await bindSessionTarget(screen.target, value.trim());
@@ -704,7 +813,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     if (screen.name === "status") return <StatusView dashboard={dashboard} />;
     if (screen.name === "startConfirm") return <StartConfirmView validation={dashboard.canStart} lines={dashboard.canStart.ok ? actions.startConfirmationSummary(dashboard.canStart.channels) : [dashboard.canStart.message]} />;
     return <HelpView />;
-  }, [actions, bindings, channelCursor, channels, currentBinding, currentChannel, dashboard, loading, manualValue, screen, selected]);
+  }, [actions, bindings, channelCursor, channels, currentBinding, currentChannel, currentPairing, dashboard, loading, manualValue, screen, selected]);
   const footerContext = screen.name === "home" && channels.length === 0
     ? "firstRun"
     : screen.name === "channels" && channels.length === 0
@@ -729,9 +838,10 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
 function maxSelectableIndex(screen: Screen, channels: LauncherDashboard["channels"], bindingItemCount: number): number {
   if (screen.name === "channels") return channels.length > 0 ? channels.length + 6 : 1;
   if (screen.name === "bindings") return Math.max(0, bindingItemCount - 1);
-  if (screen.name === "home") return channels.length === 0 ? 4 : 5;
+  if (screen.name === "home") return channels.length === 0 ? 4 : 6;
   if (screen.name === "channelDetail") return 4;
   if (screen.name === "bindingDetail") return 3;
+  if (screen.name === "pairingDetail") return 2;
   if (screen.name === "permission") return 1;
   if (screen.name === "workdir") return 1;
   return 30;
