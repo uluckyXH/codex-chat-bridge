@@ -27,13 +27,44 @@ test("package exposes chat-codex as the main startup command", () => {
 });
 
 test("CLI help documents the chat-codex main entry", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
+    version?: string;
+  };
   const help = execFileSync(process.execPath, ["dist/src/cli.js", "--help"], {
     cwd: process.cwd(),
     encoding: "utf8",
   });
 
+  assert.match(help, new RegExp(`Chat-Codex v${escapeRegExp(packageJson.version ?? "")}`));
   assert.match(help, /chat-codex\s+启动统一交互入口/);
+  assert.match(help, /chat-codex version\s+查看 Chat-Codex 和 Node\.js 版本/);
+  assert.match(help, /-v, --version\s+输出版本号/);
   assert.doesNotMatch(help, /codex-wechat-bridge codex/);
+});
+
+test("CLI version commands print package version", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
+    version?: string;
+  };
+  const version = packageJson.version ?? "";
+
+  const longVersion = execFileSync(process.execPath, ["dist/src/cli.js", "--version"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  }).trim();
+  const shortVersion = execFileSync(process.execPath, ["dist/src/cli.js", "-v"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  }).trim();
+  const detail = execFileSync(process.execPath, ["dist/src/cli.js", "version"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+
+  assert.equal(longVersion, version);
+  assert.equal(shortVersion, version);
+  assert.match(detail, new RegExp(`Chat-Codex ${escapeRegExp(version)}`));
+  assert.match(detail, new RegExp(`Node\\.js ${escapeRegExp(process.version)}`));
 });
 
 test("CLI help does not expose single-channel Codex startup entries", () => {
@@ -58,3 +89,7 @@ test("CLI help documents Feishu private-chat entry", () => {
 
   assert.match(help, /feishu status\s+查看飞书配置和连接状态/);
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

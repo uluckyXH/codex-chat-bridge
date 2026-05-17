@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { Writable } from "node:stream";
 import React from "react";
 import { render } from "ink-testing-library";
@@ -19,7 +21,7 @@ test("Ink TUI renders dashboard and navigates to core pages", async () => {
   const view = render(<ChatCodexTui actions={actions} onDone={() => undefined} />);
   await waitForInk();
 
-  assert.match(cleanFrame(view), /Chat Codex/);
+  assert.match(cleanFrame(view), new RegExp(escapeRegExp(expectedChatCodexTitle())));
   assert.match(cleanFrame(view), /启动服务/);
   assert.match(cleanFrame(view), /已准备好。按 Enter 启动 Bridge，并进入运行日志面板/);
   assert.match(cleanFrame(view), /渠道/);
@@ -287,7 +289,7 @@ test("Runtime TUI renders startup summary and transcript logs", async () => {
   }, "收到");
 
   const view = render(<RuntimeLogView summary={{
-    title: "Chat Codex 运行中",
+    title: `${expectedChatCodexTitle()} 运行中`,
     channels: ["feishu-default"],
     cwd: "/repo",
     policy: { permissionMode: "approval", sandbox: "workspace-write" },
@@ -295,7 +297,7 @@ test("Runtime TUI renders startup summary and transcript logs", async () => {
   }} store={store} />);
   await waitForInk();
 
-  assert.match(cleanFrame(view), /Chat Codex 运行中/);
+  assert.match(cleanFrame(view), new RegExp(`${escapeRegExp(expectedChatCodexTitle())} 运行中`));
   assert.match(cleanFrame(view), /已启动\s+Ctrl\+C 停止/);
   assert.match(cleanFrame(view), /Chat Codex 已启动/);
   assert.match(cleanFrame(view), /feishu-default/);
@@ -307,6 +309,17 @@ test("Runtime TUI renders startup summary and transcript logs", async () => {
 
   view.unmount();
 });
+
+function expectedChatCodexTitle(): string {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")) as {
+    version?: string;
+  };
+  return `Chat-Codex v${packageJson.version ?? "0.0.0"}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 test("Ink TUI shows session last active time in binding views", async () => {
   const dashboard = dashboardFixture();
@@ -347,7 +360,7 @@ test("Runtime TUI keeps full log messages and caps store at 300 entries", async 
   const displayStore = new RuntimeLogStore();
   displayStore.add("system", "INFO", longMessage);
   const view = render(<RuntimeLogView summary={{
-    title: "Chat Codex 运行中",
+    title: `${expectedChatCodexTitle()} 运行中`,
     channels: ["feishu-default"],
     cwd: "/repo",
     policy: { permissionMode: "approval", sandbox: "workspace-write" },
@@ -376,7 +389,7 @@ test("Runtime TUI exits on Ctrl+C signal so Bridge can stop", async () => {
   stdout.rows = 30;
 
   const done = runRuntimeLogTui({
-    title: "Chat Codex 运行中",
+    title: `${expectedChatCodexTitle()} 运行中`,
     channels: ["feishu-default"],
     cwd: "/repo",
     policy: { permissionMode: "approval", sandbox: "workspace-write" },

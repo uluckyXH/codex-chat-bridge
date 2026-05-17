@@ -133,6 +133,8 @@ TUI 会引导完成 Codex 检查、渠道管理、聊天绑定和启动服务。
 | `npm run test:integration` | 运行集成测试 |
 | `npm run chat-codex` | 启动开发版 Chat-Codex TUI |
 | `npm run cli:chat-codex` | `chat-codex` 的等价开发入口 |
+| `chat-codex --version` | 查看已安装 Chat-Codex 版本 |
+| `chat-codex version` | 查看 Chat-Codex 和 Node.js 版本 |
 | `npm run cli:mock` | Mock 通道闭环验证 |
 | `npm run cli:terminal:mock` | 终端通道 + MockCodex |
 | `npm run cli:terminal:codex` | 终端通道 + 真实 Codex |

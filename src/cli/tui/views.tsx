@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import { PasswordInput, TextInput } from "@inkjs/ui";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
 import type { ChannelInstanceRecord, PendingBindingRecord } from "../../state/persistent-state-types.js";
+import { chatCodexTitle } from "../../runtime/package-info.js";
 import type { BindingSummary, SessionChoices } from "../actions/binding-actions.js";
 import { formatSessionActiveTime } from "../actions/binding-actions.js";
 import { channelDisplayName, formatFullDateTime, formatManagedChannelLabel, formatShortDateTime } from "../actions/channel-actions.js";
@@ -34,7 +35,7 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
       ["0. 退出", "返回终端"],
     ];
     return (
-      <Frame title="Chat Codex" subtitle="首次配置">
+      <Frame title={chatCodexTitle()} subtitle="首次配置">
         <Section title="欢迎使用 Chat Codex">
           <Text>还没有配置任何渠道。请先添加微信账号或飞书机器人。</Text>
         </Section>
@@ -60,7 +61,7 @@ export function HomeView({ dashboard, selected }: { dashboard: LauncherDashboard
     ["6. 启动服务", dashboard.canStart.ok ? "启动并进入运行日志" : "需处理配置"],
   ];
   return (
-    <Frame title="Chat Codex" subtitle={`状态: ${dashboard.canStart.ok ? "可启动" : "需配置"}  权限: ${dashboard.startup.policy.permissionMode === "full" ? "完全" : "审批"}`} borderColor={dashboard.canStart.ok ? "green" : "yellow"}>
+    <Frame title={chatCodexTitle()} subtitle={`状态: ${dashboard.canStart.ok ? "可启动" : "需配置"}  权限: ${dashboard.startup.policy.permissionMode === "full" ? "完全" : "审批"}`} borderColor={dashboard.canStart.ok ? "green" : "yellow"}>
       <Section title="启动服务">
         <Text color={dashboard.canStart.ok ? "green" : "yellow"} bold>
           {dashboard.canStart.ok ? "已准备好。按 Enter 启动 Bridge，并进入运行日志面板。" : dashboard.canStart.message}

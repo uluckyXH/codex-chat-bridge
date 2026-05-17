@@ -6,6 +6,7 @@ import { ExecCodexAdapter } from "../../codex/exec-codex-adapter.js";
 import type { CodexAdapter } from "../../codex/types.js";
 import { ConsoleLogger } from "../../logging/logger.js";
 import { ConsoleTranscriptSink } from "../../logging/transcript.js";
+import { chatCodexTitle } from "../../runtime/package-info.js";
 import { FileStateStore } from "../../state/file-state-store.js";
 import type { ChannelActions } from "../actions/channel-actions.js";
 import type { PreparedServeStartup, ServeChannelPlan } from "../launcher-types.js";
@@ -48,7 +49,7 @@ export async function startServeBridge(
       runtimeLogs.add("system", "渠道", adapters.map((adapter) => adapter.id).join(", "));
       runtimeLogs.add("system", "退出", "按 Ctrl+C 停止服务。");
       await runRuntimeLogTui({
-        title: "Chat Codex 运行中",
+        title: `${chatCodexTitle()} 运行中`,
         channels: adapters.map((adapter) => adapter.id),
         cwd: startup.cwd,
         policy: startup.policy,

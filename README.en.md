@@ -119,6 +119,8 @@ The TUI guides Codex checks, channel management, chat bindings, and service star
 | `npm run test:integration` | Run integration tests |
 | `npm run chat-codex` | Start the development Chat-Codex TUI |
 | `npm run cli:chat-codex` | Equivalent development entry |
+| `chat-codex --version` | Show the installed Chat-Codex version |
+| `chat-codex version` | Show Chat-Codex and Node.js versions |
 | `npm run cli:mock` | Mock channel loop |
 | `npm run cli:terminal:mock` | Terminal channel + MockCodex |
 | `npm run cli:terminal:codex` | Terminal channel + real Codex |

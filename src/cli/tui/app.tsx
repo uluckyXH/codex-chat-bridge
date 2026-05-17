@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, useApp, useInput } from "ink";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
 import type { FeishuCredentials } from "../../channels/feishu/feishu-types.js";
+import { chatCodexTitle } from "../../runtime/package-info.js";
 import type { BindingSummary, SessionChoices } from "../actions/binding-actions.js";
 import { formatManagedChannelLabel } from "../actions/channel-actions.js";
 import {
@@ -669,7 +670,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
   };
 
   const body = useMemo(() => {
-    if (!dashboard) return <LoadingView title="Chat Codex" message="正在加载状态..." />;
+    if (!dashboard) return <LoadingView title={chatCodexTitle()} message="正在加载状态..." />;
     if (screen.name === "home") return <HomeView dashboard={dashboard} selected={selected} />;
     if (screen.name === "channels") return <ChannelsView channels={channels} selected={selected} channelCursor={channelCursor} />;
     if (screen.name === "channelDetail") return <ChannelDetailView channel={currentChannel} selected={selected} />;

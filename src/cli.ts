@@ -21,6 +21,7 @@ import { MockCodexAdapter } from "./codex/mock-codex-adapter.js";
 import type { CodexAdapter } from "./codex/types.js";
 import { resolveNewSessionWorkdir } from "./codex/workdir.js";
 import { ConsoleLogger } from "./logging/logger.js";
+import { CHAT_CODEX_DISPLAY_NAME, chatCodexTitle, chatCodexVersion, chatCodexVersionSummary } from "./runtime/package-info.js";
 import { formatLocalDateTime } from "./time/display-time.js";
 
 interface StartupOptions {
@@ -49,6 +50,16 @@ async function main(argv: string[]): Promise<void> {
   const [area, command, ...rest] = argv;
   if (!area) {
     await runServe({});
+    return;
+  }
+
+  if (area === "--version" || area === "-v") {
+    console.log(chatCodexVersion());
+    return;
+  }
+
+  if (area === "version") {
+    console.log(chatCodexVersionSummary());
     return;
   }
 
@@ -427,15 +438,17 @@ function createRealCodexAdapter(startup: PreparedCodexStartup | { policy?: Codex
 
 function printHelp(): void {
   console.log([
-    "Chat Codex",
+    chatCodexTitle(),
     "",
     "Commands:",
     "  chat-codex                         启动统一交互入口（管理渠道并启动 Codex）",
+    "  chat-codex version                 查看 Chat-Codex 和 Node.js 版本",
     "  chat-codex test                    运行本地 mock Codex/Channel 流程",
     "  chat-codex terminal mock           启动本地终端通道 + MockCodex",
     "  chat-codex terminal codex          启动本地终端通道 + Codex",
     "",
     "Options:",
+    "    -v, --version                   输出版本号",
     "    --session new|last|<id>          设置启动时首个微信私聊预设；不会绑定整个微信账号",
     "    --cwd <dir>, --workdir <dir>     设置新会话工作目录；目录不存在会自动创建",
     "    --permission approval|full       设置安全沙箱或完全权限",
@@ -449,6 +462,8 @@ function printHelp(): void {
     "  chat-codex weixin login            显示终端二维码并等待微信扫码登录",
     "  chat-codex feishu status           查看飞书配置和连接状态",
     "  chat-codex start                   当前等同 terminal mock",
+    "",
+    `${CHAT_CODEX_DISPLAY_NAME}: ${chatCodexVersion()}`,
   ].join("\n"));
 }
 
