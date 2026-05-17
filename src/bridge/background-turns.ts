@@ -1,5 +1,5 @@
 import type { ApprovalManager } from "../approvals/approval-manager.js";
-import type { CodexEvent, CodexProgressKind } from "../codex/types.js";
+import type { CodexEvent, CodexProgressKind, CodexSessionStatus } from "../codex/types.js";
 import type { Logger } from "../logging/logger.js";
 import type { TranscriptSink } from "../logging/transcript.js";
 import type { ChannelMessage, ChannelTarget } from "../protocol/channel.js";
@@ -75,6 +75,7 @@ export class BridgeBackgroundTurns {
         type: "running",
         turnId: event.turnId,
         task: "Goal 自动续跑",
+        startedAt: event.startedAt ?? new Date().toISOString(),
       });
       await this.delivery.sendTyping(state.target, true);
     } else if (event.type === "assistant.progress") {
@@ -94,6 +95,7 @@ export class BridgeBackgroundTurns {
       this.state.setSessionStatus(event.sessionId, {
         type: "waiting_approval",
         detail: event.approval.reason ?? event.approval.kind,
+        startedAt: currentStartedAt(this.state.getSession(event.sessionId)?.status),
       });
       const pending = this.approvals.create(state.routeKey, state.message.sender.id, event.approval);
       await this.delivery.sendApprovalTextUntilDelivered(state.routeKey, state.target, pending);
@@ -143,4 +145,8 @@ export class BridgeBackgroundTurns {
       this.startRouteWorker(state.routeKey);
     }
   }
+}
+
+function currentStartedAt(status: CodexSessionStatus | undefined): string | undefined {
+  return status && "startedAt" in status ? status.startedAt : undefined;
 }

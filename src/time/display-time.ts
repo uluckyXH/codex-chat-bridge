@@ -27,6 +27,25 @@ export function formatLocalDateTimeWithZone(value: DisplayTimeInput, options: Di
   return `${formatted}（${resolveTimeZone(options)}）`;
 }
 
+export function formatElapsedDurationSince(value: DisplayTimeInput, now: DisplayTimeInput = Date.now()): string {
+  const start = parseDisplayTimeInput(value);
+  const end = parseDisplayTimeInput(now);
+  if (!start || !end) return "未知";
+  return formatElapsedDurationMs(Math.max(0, end.getTime() - start.getTime()));
+}
+
+export function formatElapsedDurationMs(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds)) return "未知";
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const seconds = totalSeconds % 60;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const minutes = totalMinutes % 60;
+  const hours = Math.floor(totalMinutes / 60);
+  if (hours > 0) return `${hours}h ${pad2(minutes)}m ${pad2(seconds)}s`;
+  if (totalMinutes > 0) return `${totalMinutes}m ${pad2(seconds)}s`;
+  return `${seconds}s`;
+}
+
 type DisplayTimeStyle = "full" | "short" | "clock";
 
 function formatDateTime(value: DisplayTimeInput, style: DisplayTimeStyle, options: DisplayTimeOptions): string {
@@ -102,4 +121,8 @@ function dateTimeParts(date: Date, timeZone: string): {
   const second = parts.second;
   if (!year || !month || !day || !hour || !minute || !second) return undefined;
   return { year, month, day, hour, minute, second };
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
 }

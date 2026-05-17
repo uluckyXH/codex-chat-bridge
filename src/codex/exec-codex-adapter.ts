@@ -96,9 +96,10 @@ export class ExecCodexAdapter implements CodexAdapter {
     const session = stored.session;
     const promptText = codexInputPlainText(prompt);
     const turnId = `exec-turn-${Date.now()}`;
-    stored.status = { type: "running", turnId, task: truncatePrompt(promptText) };
+    const startedAt = new Date().toISOString();
+    stored.status = { type: "running", turnId, task: truncatePrompt(promptText), startedAt };
     stored.updatedAt = new Date().toISOString();
-    yield { type: "turn.started", sessionId, turnId };
+    yield { type: "turn.started", sessionId, turnId, startedAt };
 
     const args = this.buildArgs(stored, promptText);
     const child = spawnCodex(this.codexCommand, args, {

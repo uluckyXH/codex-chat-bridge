@@ -214,8 +214,9 @@ export class AppServerCodexAdapter implements CodexAdapter {
     const registerTurn = (response: unknown): void => {
       const turn = objectValue(objectValue(response).turn);
       turnId = stringValue(turn.id) ?? `app-server-turn-${Date.now()}`;
+      const startedAt = startedAtFromTurn(turn);
       this.turns.registerTurn(sessionId, turnId, queue, collaborationMode);
-      stored.status = withContext(stored, { type: "running", turnId, task: truncatePrompt(promptText) });
+      stored.status = withContext(stored, { type: "running", turnId, task: truncatePrompt(promptText), startedAt });
       stored.status = withModelPolicy(stored.status, modelPolicy);
       stored.currentTurnId = turnId;
       stored.updatedAt = new Date().toISOString();
@@ -236,7 +237,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
     }, {
       onResult: registerTurn,
     });
-    yield { type: "turn.started", sessionId, turnId };
+    yield { type: "turn.started", sessionId, turnId, startedAt: runningStartedAt(stored.status) };
 
     for await (const event of queue) {
       yield event;
@@ -427,7 +428,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
       }
       this.compactWaiters.set(sessionId, waiter);
     });
-    stored.status = withContext(stored, { type: "running", task: "上下文压缩" });
+    stored.status = withContext(stored, { type: "running", task: "上下文压缩", startedAt: new Date().toISOString() });
     stored.updatedAt = new Date().toISOString();
     try {
       await this.request<Record<string, unknown>>("thread/compact/start", {
@@ -557,7 +558,8 @@ export class AppServerCodexAdapter implements CodexAdapter {
     this.turns.get(turnId) ?? this.turns.createBackgroundTurn(sessionId, turnId);
     const stored = this.sessionStore.get(sessionId);
     if (stored) {
-      stored.status = withContext(stored, { type: "waiting_approval", detail: approval.reason ?? approval.kind });
+      const startedAt = runningStartedAt(stored.status);
+      stored.status = withContext(stored, { type: "waiting_approval", detail: approval.reason ?? approval.kind, startedAt });
       stored.updatedAt = new Date().toISOString();
     }
     const pending: PendingServerApproval = {
@@ -573,7 +575,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
         });
         const current = this.sessionStore.get(sessionId);
         if (current) {
-          current.status = withContext(current, { type: "running", turnId });
+          current.status = withContext(current, { type: "running", turnId, startedAt: runningStartedAt(current.status) });
           current.updatedAt = new Date().toISOString();
         }
       },
@@ -594,4 +596,18 @@ export class AppServerCodexAdapter implements CodexAdapter {
   private writeMessage(message: unknown): void {
     this.rpc.writeMessage(message);
   }
+}
+
+function startedAtFromTurn(turn: Record<string, unknown>): string {
+  return isoFromSeconds(numberValue(turn.startedAt))
+    ?? isoFromMilliseconds(numberValue(turn.startedAtMs))
+    ?? new Date().toISOString();
+}
+
+function isoFromMilliseconds(milliseconds: number | undefined): string | undefined {
+  return milliseconds ? new Date(milliseconds).toISOString() : undefined;
+}
+
+function runningStartedAt(status: CodexSessionStatus): string | undefined {
+  return "startedAt" in status ? status.startedAt : undefined;
 }

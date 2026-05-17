@@ -14,7 +14,7 @@ import type { ChannelRegistry } from "../channels/registry.js";
 import type { ChannelMessage } from "../protocol/channel.js";
 import type { ChannelDeliveryPolicy } from "../protocol/delivery-policy.js";
 import type { MemoryStateStore } from "../state/memory-state-store.js";
-import { formatLocalDateTime } from "../time/display-time.js";
+import { formatElapsedDurationSince, formatLocalDateTime } from "../time/display-time.js";
 import type { CompactState, InitialRouteBinding, ProgressDeliveryMode } from "./bridge-types.js";
 import {
   formatApprovalSupport,
@@ -103,9 +103,10 @@ export class BridgeStatusText {
     const adapterStatus: CodexSessionStatus = binding
       ? await this.codex.getStatus(binding.sessionId)
       : { type: "unknown", detail: "no active session" };
-    const sessionStatus: CodexSessionStatus = adapterStatus.type === "unknown" && localSession
+    const statusFromAdapterOrLocal: CodexSessionStatus = adapterStatus.type === "unknown" && localSession
       ? localSession.status
       : adapterStatus;
+    const sessionStatus = withLocalStartedAt(statusFromAdapterOrLocal, localSession?.status);
     const approvals = this.approvals.list(routeKey);
     const compactState = this.compactStateForRoute(routeKey);
     const compactRunning = compactState.type === "running";
@@ -117,18 +118,16 @@ export class BridgeStatusText {
     const goal = binding && this.codex.getGoal
       ? await this.codex.getGoal(binding.sessionId).catch(() => undefined)
       : undefined;
-    return [
-      "**Codex 状态**",
-      "",
-      "**会话**",
+    const sessionLines = [
       `- 当前会话: ${binding ? `\`${binding.sessionId}\`` : formatUnboundSessionForStatus(pendingInitialBinding)}`,
       `- 运行状态: ${formatCodexStatus(sessionStatus)}`,
       `- 当前模型: ${formatModelInfoForStatus(sessionStatus.model)}`,
       ...formatContextUsageLines(sessionStatus.context),
       binding ? `- 工作目录: \`${localSession?.session.cwd ?? "未知"}\`` : undefined,
-      "",
-      "**运行**",
+    ];
+    const runtimeLines = [
       `- 处理状态: ${workerRunning ? "正在处理" : "空闲"}`,
+      formatCurrentTurnDurationLine(sessionStatus),
       `- 排队消息: \`${this.routeQueueLength(routeKey)}\``,
       `- 待投递补充消息: \`${this.routeSteerPendingCount(routeKey)}\``,
       `- 待处理图片: \`${this.pendingMediaCount(routeKey)}\``,
@@ -143,12 +142,19 @@ export class BridgeStatusText {
       policyStatus && !policyStatus.interactiveApprovals ? `- 审批入口: ${formatApprovalSupport(policyStatus)}` : undefined,
       compactRunning ? "- 可用操作: 等待上下文压缩完成；当前不支持中途取消 /compact" : undefined,
       workerRunning && binding && !compactRunning ? "- 可用操作: 发送 `/stop` 终止当前任务" : undefined,
-      "",
-      "**渠道**",
+    ];
+    const channelLines = [
       `- 渠道: \`${channelStatus.channelId}\``,
       `- 连接状态: ${formatChannelStateForStatus(channelStatus.state)}`,
       channelStatus.lastError ? `- 最近错误: ${channelStatus.lastError}` : undefined,
-    ].filter(Boolean).join("\n");
+    ];
+    return [
+      "**Codex 状态**",
+      "",
+      ...formatStatusSection("会话", sessionLines),
+      ...formatStatusSection("运行", runtimeLines),
+      ...formatStatusSection("渠道", channelLines),
+    ].join("\n");
   }
 
   async sessionsText(routeKey?: string): Promise<string> {
@@ -197,46 +203,60 @@ export class BridgeStatusText {
 
   helpText(message?: ChannelMessage): string {
     const deliveryPolicy = this.deliveryPolicyFor(message);
-    const commands: Array<[command: string, description: string]> = [
-      ["/help", "查看命令"],
-      ["/new", "创建新 Codex 会话"],
-      ["/status", "查看状态、队列、审批和上下文 token 用量"],
-      ["/sessions", "列出当前上下文会话"],
-      ["/sessions all", "列出全部可发现 Codex 会话"],
-      ["/resume [session|编号]", "恢复并绑定已有会话；不带参数时进入编号选择"],
-      ["/use [session|编号]", "切换到已有会话；不带参数时进入编号选择"],
-      ["/whoami", "查看当前通道身份"],
-      ["/debug", "查看调试状态"],
-      ["/plan [任务]", "进入计划模式，或用计划模式处理任务"],
-      ["/code [任务]", "切回默认执行模式，或用默认模式处理任务"],
-      ["/goal [目标]", "查看或设置当前会话的实验 Goal 长期目标"],
-      ["/goal pause", "暂停 Goal：保留目标，但暂时不让 Codex 按它持续推进"],
-      ["/goal resume", "恢复 Goal：继续按已暂停的目标推进"],
-      ["/goal clear", "清除 Goal：退出当前会话的 Goal 追踪"],
-      ["/progress [brief|detailed|silent]", "查看或设置当前上下文进度投递模式"],
-      ["/sendfile <任务内容>", "让 Codex 本轮按内部协议声明最终要发送的文件"],
-      ["/compact", "压缩当前 Codex session 的历史上下文；需要 /compact confirm 确认"],
-      ["/model [模型|编号] [effort]", "查看可用模型，或切换当前 Codex session 后续任务的模型和思考程度"],
-      ["/permission [approval|full confirm]", "查看或切换当前绑定 Codex session 的权限模式"],
-      ["/OK", "批准当前审批"],
-      ["/P", "按当前会话批准审批，后续同类操作尽量不再询问"],
-      ["/NO", "拒绝当前审批"],
-      ["/stop", "终止当前正在处理的 Codex 任务"],
+    const commands: HelpCommand[] = [
+      { command: "/help", description: "查看命令。" },
+      { command: "/new", description: "创建新 Codex 会话。" },
+      { command: "/status", description: "查看状态、运行耗时、队列、审批和上下文 token 用量。" },
+      { command: "/sessions", description: "列出当前上下文会话。" },
+      { command: "/sessions all", description: "列出全部可发现 Codex 会话。" },
+      { command: "/resume [session|编号]", description: "恢复并绑定已有会话；不带参数时进入编号选择。" },
+      { command: "/use [session|编号]", description: "切换到已有会话；不带参数时进入编号选择。" },
+      { command: "/whoami", description: "查看当前通道身份。" },
+      { command: "/debug", description: "查看调试状态。" },
+      { command: "/plan [任务]", description: "进入计划模式，或用计划模式处理任务。" },
+      { command: "/code [任务]", description: "切回默认执行模式，或用默认模式处理任务。" },
+      {
+        command: "/goal [目标]",
+        description: "查看或设置当前会话的实验 Goal 长期目标。",
+        details: [
+          "`/goal pause`: 暂停 Goal，保留目标但暂时不让 Codex 按它持续推进。",
+          "`/goal resume`: 恢复 Goal，继续按已暂停的目标推进。",
+          "`/goal clear`: 清除 Goal，退出当前会话的 Goal 追踪。",
+        ],
+      },
+      {
+        command: "/progress [brief|detailed|silent]",
+        description: "查看或设置当前上下文进度投递模式。",
+        hideWhenProgressDisabled: true,
+        details: [
+          "`brief`: 只发送计划、自言自语、搜索和文件变更摘要。",
+          "`detailed`: 发送所有可见进度，包括命令和工具调用细节。",
+          "`silent`: 不发送进度文本，只发送开始、审批和最终回复。",
+        ],
+      },
+      { command: "/sendfile <任务内容>", description: "让 Codex 本轮按内部协议声明最终要发送的文件。" },
+      {
+        command: "/compact",
+        description: "压缩当前 Codex session 的历史上下文。",
+        details: ["`/compact confirm`: 确认并开始压缩。", "`/cancel`: 取消等待中的压缩确认。"],
+      },
+      { command: "/model [模型|编号] [effort]", description: "查看可用模型，或切换当前 Codex session 后续任务的模型和思考程度。" },
+      { command: "/permission [approval|full confirm]", description: "查看或切换当前绑定 Codex session 的权限模式。" },
+      { command: "/OK", description: "批准当前审批。" },
+      { command: "/P", description: "按当前会话批准审批，后续同类操作尽量不再询问。" },
+      { command: "/NO", description: "拒绝当前审批。" },
+      { command: "/stop", description: "终止当前正在处理的 Codex 任务。" },
     ];
     const visibleCommands = [
       ...(deliveryPolicy.progressCommand === "disabled"
-        ? commands.filter(([command]) => !command.startsWith("/progress"))
+        ? commands.filter((entry) => !entry.hideWhenProgressDisabled)
         : commands),
-      ...deliveryPolicy.refreshCommands.map((command): [string, string] => [`/${command.command}`, command.description]),
+      ...deliveryPolicy.refreshCommands.map((command): HelpCommand => ({ command: `/${command.command}`, description: command.description })),
     ];
     return [
       "**可用命令**",
       "",
-      ...visibleCommands.flatMap(([command, description]) => [
-        `\`\`\`text\n${command}\n\`\`\``,
-        description,
-        "",
-      ]),
+      ...visibleCommands.flatMap(formatHelpCommandLines),
     ].join("\n").trimEnd();
   }
 
@@ -314,6 +334,59 @@ export class BridgeStatusText {
     if (cwd) parts.push(`cwd=${cwd}`);
     return parts.join(" ");
   }
+}
+
+interface HelpCommand {
+  command: string;
+  description: string;
+  details?: string[];
+  hideWhenProgressDisabled?: boolean;
+}
+
+function formatHelpCommandLines(entry: HelpCommand): string[] {
+  return [
+    `- \`${entry.command}\`: ${entry.description}`,
+    ...(entry.details ?? []).map((detail) => `  - ${detail}`),
+  ];
+}
+
+function formatStatusSection(title: string, lines: Array<string | undefined>): string[] {
+  return [
+    `- **${title}**`,
+    ...lines.filter((line): line is string => Boolean(line)).map(formatStatusChildLine),
+  ];
+}
+
+function formatStatusChildLine(line: string): string {
+  if (line.includes("\n")) return line;
+  return line.startsWith("- ") ? `  ${line}` : `  - ${line}`;
+}
+
+function formatCurrentTurnDurationLine(status: CodexSessionStatus): string | undefined {
+  if (!isActiveCodexStatus(status.type)) return undefined;
+  const startedAt = "startedAt" in status ? status.startedAt : undefined;
+  if (!startedAt) return undefined;
+  return `- 当前任务耗时: \`${formatElapsedDurationSince(startedAt)}\``;
+}
+
+function isActiveCodexStatus(status: CodexSessionStatus["type"]): boolean {
+  return status === "running" || status === "waiting_approval" || status === "waiting_input";
+}
+
+function withLocalStartedAt(status: CodexSessionStatus, localStatus: CodexSessionStatus | undefined): CodexSessionStatus {
+  if (!isActiveCodexStatus(status.type) || ("startedAt" in status && status.startedAt)) return status;
+  if (!localStatus || !isActiveCodexStatus(localStatus.type) || !("startedAt" in localStatus) || !localStatus.startedAt) return status;
+  if (!isSameActiveTurn(status, localStatus)) return status;
+  if (status.type === "running") return { ...status, startedAt: localStatus.startedAt };
+  if (status.type === "waiting_approval") return { ...status, startedAt: localStatus.startedAt };
+  if (status.type === "waiting_input") return { ...status, startedAt: localStatus.startedAt };
+  return status;
+}
+
+function isSameActiveTurn(left: CodexSessionStatus, right: CodexSessionStatus): boolean {
+  const leftTurnId = "turnId" in left ? left.turnId : undefined;
+  const rightTurnId = "turnId" in right ? right.turnId : undefined;
+  return !leftTurnId || !rightTurnId || leftTurnId === rightTurnId;
 }
 
 function formatCompactStatusLines(state: CompactState): string[] {

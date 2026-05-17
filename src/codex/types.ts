@@ -95,9 +95,9 @@ export interface CodexModelPolicy {
 
 export type CodexSessionBaseStatus =
   | { type: "idle" }
-  | { type: "running"; task?: string; turnId?: string }
-  | { type: "waiting_approval"; detail?: string }
-  | { type: "waiting_input"; detail?: string }
+  | { type: "running"; task?: string; turnId?: string; startedAt?: string }
+  | { type: "waiting_approval"; detail?: string; startedAt?: string }
+  | { type: "waiting_input"; detail?: string; startedAt?: string }
   | { type: "failed"; error: string }
   | { type: "unknown"; detail?: string };
 
@@ -107,7 +107,7 @@ export type CodexSessionStatus = CodexSessionBaseStatus & {
 };
 
 export type CodexEvent =
-  | { type: "turn.started"; sessionId: string; turnId: string }
+  | { type: "turn.started"; sessionId: string; turnId: string; startedAt?: string }
   | { type: "assistant.progress"; sessionId: string; turnId: string; text: string; kind?: CodexProgressKind }
   | { type: "assistant.plan"; sessionId: string; turnId: string; text: string }
   | { type: "assistant.delta"; sessionId: string; turnId: string; text: string }

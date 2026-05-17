@@ -10,7 +10,7 @@ import {
 import { withContext } from "./session-status.js";
 import { AsyncEventQueue, createTurnQueueRecord, shouldCreateBackgroundTurn } from "./turn-store.js";
 import type { AppServerSessionRecord, JsonRpcNotification, TurnQueueRecord } from "./types.js";
-import { arrayValue, objectValue, stringValue } from "./value-parsers.js";
+import { arrayValue, isoFromSeconds, numberValue, objectValue, stringValue } from "./value-parsers.js";
 import { parseTokenUsage } from "./model-policy.js";
 
 export interface AppServerTurnControllerOptions {
@@ -77,11 +77,12 @@ export class AppServerTurnController {
     const queue = new AsyncEventQueue<CodexEvent>();
     const turn = createTurnQueueRecord(sessionId, turnId, queue);
     this.turnQueues.set(turnId, turn);
-    stored.status = withContext(stored, { type: "running", turnId });
+    const startedAt = new Date().toISOString();
+    stored.status = withContext(stored, { type: "running", turnId, startedAt });
     stored.currentTurnId = turnId;
     stored.updatedAt = new Date().toISOString();
     void this.drainBackgroundTurn(queue);
-    queue.push({ type: "turn.started", sessionId, turnId });
+    queue.push({ type: "turn.started", sessionId, turnId, startedAt });
     return turn;
   }
 
@@ -132,7 +133,8 @@ export class AppServerTurnController {
     if (notification.method === "turn/started") {
       const stored = this.sessions.get(sessionId);
       if (stored) {
-        stored.status = withContext(stored, { type: "running", turnId });
+        const startedAt = startedAtFromNotification(params) ?? runningStartedAt(stored.status) ?? new Date().toISOString();
+        stored.status = withContext(stored, { type: "running", turnId, startedAt });
         stored.currentTurnId = turnId;
         stored.updatedAt = new Date().toISOString();
       }
@@ -348,4 +350,19 @@ export class AppServerTurnController {
     turn.emittedProgress.add(normalized);
     turn.queue.push({ type: "assistant.progress", sessionId, turnId, text: normalized, kind });
   }
+}
+
+function startedAtFromNotification(params: Record<string, unknown>): string | undefined {
+  const turn = objectValue(params.turn);
+  return isoFromSeconds(numberValue(turn.startedAt))
+    ?? isoFromMilliseconds(numberValue(turn.startedAtMs))
+    ?? isoFromMilliseconds(numberValue(params.startedAtMs));
+}
+
+function isoFromMilliseconds(milliseconds: number | undefined): string | undefined {
+  return milliseconds ? new Date(milliseconds).toISOString() : undefined;
+}
+
+function runningStartedAt(status: AppServerSessionRecord["status"]): string | undefined {
+  return "startedAt" in status ? status.startedAt : undefined;
 }

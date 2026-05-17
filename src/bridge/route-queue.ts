@@ -188,6 +188,7 @@ export class BridgeRouteQueue {
         await this.delivery.withTyping(target, async () => {
           let finalText = "";
           let finalPlanText = "";
+          let currentTurnStartedAt: string | undefined;
           const codexPrompt = sendFile
             ? typeof prompt === "string"
               ? withSendFileInstruction(prompt)
@@ -195,10 +196,12 @@ export class BridgeRouteQueue {
             : prompt;
           for await (const event of this.codex.run(session.id, codexPrompt, collaborationMode ? { collaborationMode } : undefined)) {
             if (event.type === "turn.started") {
+              currentTurnStartedAt = event.startedAt ?? new Date().toISOString();
               this.state.setSessionStatus(session.id, {
                 type: "running",
                 turnId: event.turnId,
                 task: truncateForChannel(promptText || codexInputPlainText(prompt), 120),
+                startedAt: currentTurnStartedAt,
               });
             } else if (event.type === "assistant.progress") {
               const progressText = `Codex 进度:\n${truncateForChannel(event.text)}`;
@@ -217,6 +220,7 @@ export class BridgeRouteQueue {
               this.state.setSessionStatus(session.id, {
                 type: "waiting_approval",
                 detail: event.approval.reason ?? event.approval.kind,
+                startedAt: currentTurnStartedAt,
               });
               const pending = this.approvals.create(message.routeKey, message.sender.id, event.approval);
               await this.delivery.sendApprovalTextUntilDelivered(message.routeKey, target, pending);

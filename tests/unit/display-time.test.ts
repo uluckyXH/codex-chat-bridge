@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   currentTimeZone,
+  formatElapsedDurationMs,
+  formatElapsedDurationSince,
   formatLocalClock,
   formatLocalDateTime,
   formatLocalDateTimeWithZone,
@@ -32,4 +34,12 @@ test("display time falls back to unknown for invalid values and UTC for invalid 
 test("current timezone is detected from the running machine", () => {
   assert.equal(typeof currentTimeZone(), "string");
   assert.ok(currentTimeZone().length > 0);
+});
+
+test("display time formats elapsed durations like Codex worked-for labels", () => {
+  assert.equal(formatElapsedDurationMs(8_900), "8s");
+  assert.equal(formatElapsedDurationMs(608_000), "10m 08s");
+  assert.equal(formatElapsedDurationMs(3_723_000), "1h 02m 03s");
+  assert.equal(formatElapsedDurationSince("2026-05-17T10:00:00.000Z", "2026-05-17T10:10:08.000Z"), "10m 08s");
+  assert.equal(formatElapsedDurationSince("bad", "2026-05-17T10:10:08.000Z"), "未知");
 });

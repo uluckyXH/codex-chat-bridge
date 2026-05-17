@@ -593,7 +593,9 @@ test("Bridge handles compact confirmation and success over mock channel", async 
   const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
   const confirmation = channel.sentMessages.find((message) => message.text.includes("即将压缩当前 Codex session"))?.text ?? "";
   const completed = channel.sentMessages.find((message) => message.text.includes("上下文压缩完成"))?.text ?? "";
-  assert.ok(help.includes("```text\n/compact\n```"));
+  assert.equal(help.includes("```text"), false);
+  assert.ok(help.includes("- `/compact`: 压缩当前 Codex session 的历史上下文。"));
+  assert.ok(help.includes("  - `/compact confirm`: 确认并开始压缩。"));
   assert.ok(confirmation.includes("压缩前上下文: `164,171 / 258,400 token`"));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("上下文压缩: 等待确认")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已取消本次上下文压缩确认")));
@@ -692,17 +694,17 @@ test("Bridge exposes all sessions command for channel users", async () => {
   await channel.emitText("/all-sessions", { conversationId: "main" });
   await bridge.stop();
 
-  assert.ok(channel.sentMessages.some((message) => message.text.includes("```text\n/sessions all\n```")));
+  assert.ok(channel.sentMessages.some((message) => message.text.includes("- `/sessions all`: 列出全部可发现 Codex 会话。")));
   const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
-  assert.ok(help.includes("```text\n/OK\n```"));
+  assert.ok(help.includes("- `/OK`: 批准当前审批。"));
   assert.ok(help.includes("批准当前审批"));
-  assert.ok(help.includes("```text\n/P\n```"));
+  assert.ok(help.includes("- `/P`: 按当前会话批准审批，后续同类操作尽量不再询问。"));
   assert.ok(help.includes("按当前会话批准审批"));
-  assert.ok(help.includes("```text\n/NO\n```"));
+  assert.ok(help.includes("- `/NO`: 拒绝当前审批。"));
   assert.ok(help.includes("拒绝当前审批"));
-  assert.ok(help.includes("```text\n/permission [approval|full confirm]\n```"));
+  assert.ok(help.includes("- `/permission [approval|full confirm]`: 查看或切换当前绑定 Codex session 的权限模式。"));
   assert.equal(help.includes("/approve [id]"), false);
-  assert.equal(help.includes("cancel"), false);
+  assert.ok(help.includes("`/cancel`: 取消等待中的压缩确认。"));
   const allSessionsMessages = channel.sentMessages.filter((message) => message.text.startsWith("全部可发现 Codex 会话"));
   assert.equal(allSessionsMessages.length, 2);
   assert.ok(allSessionsMessages.every((message) => message.text.includes("mock-codex-1")));
@@ -741,6 +743,9 @@ test("Bridge status includes session token context without channel identity deta
 
   const statusMessage = channel.sentMessages.at(-1)?.text ?? "";
   assert.match(statusMessage, /\*\*Codex 状态\*\*/);
+  assert.match(statusMessage, /- \*\*会话\*\*\n  - 当前会话: `mock-codex-1`/);
+  assert.match(statusMessage, /- \*\*运行\*\*\n  - 处理状态:/);
+  assert.match(statusMessage, /- \*\*渠道\*\*\n  - 渠道: `mock`/);
   assert.match(statusMessage, /当前会话: `mock-codex-1`/);
   assert.match(statusMessage, /当前模型: `gpt-test`（服务商 `openai`，服务档 `default`，思考程度 `high`）/);
   assert.match(statusMessage, /上下文: `164,171 \/ 258,400 token`（63\.5%，剩余 94,229）/);
@@ -763,7 +768,7 @@ test("Bridge model command lists actual models and is shown in help", async () =
   await bridge.stop();
 
   const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
-  assert.ok(help.includes("```text\n/model [模型|编号] [effort]\n```"));
+  assert.ok(help.includes("- `/model [模型|编号] [effort]`: 查看可用模型，或切换当前 Codex session 后续任务的模型和思考程度。"));
   const visibleList = channel.sentMessages.find((message) => message.text.includes("**模型设置**") && !message.text.includes("gpt-hidden"))?.text ?? "";
   assert.ok(visibleList.includes("`model/list`"));
   assert.ok(visibleList.includes("`gpt-test`"));
@@ -828,9 +833,9 @@ test("Bridge switches persistent collaboration mode with /plan and /code", async
   await bridge.stop();
 
   const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
-  assert.ok(help.includes("```text\n/plan [任务]\n```"));
-  assert.ok(help.includes("```text\n/code [任务]\n```"));
-  assert.equal(help.includes("```text\n/default"), false);
+  assert.ok(help.includes("- `/plan [任务]`: 进入计划模式，或用计划模式处理任务。"));
+  assert.ok(help.includes("- `/code [任务]`: 切回默认执行模式，或用默认模式处理任务。"));
+  assert.equal(help.includes("`/default`"), false);
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已进入 Plan mode")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已切回默认执行模式")));
   const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
@@ -873,17 +878,17 @@ test("Bridge manages experimental goal commands for the current session", async 
   await bridge.stop();
 
   const help = channel.sentMessages.find((message) => message.text.startsWith("**可用命令**"))?.text ?? "";
-  assert.ok(help.includes("```text\n/goal [目标]\n```"));
-  assert.ok(help.includes("```text\n/goal pause\n```"));
-  assert.ok(help.includes("暂停 Goal：保留目标"));
-  assert.ok(help.includes("```text\n/goal resume\n```"));
-  assert.ok(help.includes("恢复 Goal：继续按已暂停的目标推进"));
-  assert.ok(help.includes("```text\n/goal clear\n```"));
-  assert.ok(help.includes("清除 Goal：退出当前会话的 Goal 追踪"));
+  assert.ok(help.includes("- `/goal [目标]`: 查看或设置当前会话的实验 Goal 长期目标。"));
+  assert.ok(help.includes("  - `/goal pause`: 暂停 Goal"));
+  assert.ok(help.includes("暂停 Goal，保留目标"));
+  assert.ok(help.includes("  - `/goal resume`: 恢复 Goal"));
+  assert.ok(help.includes("恢复 Goal，继续按已暂停的目标推进"));
+  assert.ok(help.includes("  - `/goal clear`: 清除 Goal"));
+  assert.ok(help.includes("清除 Goal，退出当前会话的 Goal 追踪"));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("当前没有绑定 Codex 会话，也没有 Goal")));
   assert.ok(channel.sentMessages.some((message) => message.text.includes("已设置 Goal")));
   const status = channel.sentMessages.find((message) => message.text.includes("**Codex 状态**"))?.text ?? "";
-  assert.ok(status.includes("长期目标: 进行中 - 完成微信 Goal 适配并保持测试通过"));
+  assert.ok(status.includes("长期目标 (/goal): 进行中 - 完成微信 Goal 适配并保持测试通过"));
   assert.ok(status.includes("目标 token: `0`"));
   assert.ok(status.includes("目标耗时: `0s`"));
   assert.match(status, new RegExp(`目标更新时间: \`20\\d\\d-\\d\\d-\\d\\d \\d\\d:\\d\\d:\\d\\d（${escapeRegExp(currentTimeZone())}）\``));
@@ -1760,8 +1765,8 @@ test("Bridge hides progress command and shows /fff in weixin help", async () => 
   await bridge.stop();
 
   const help = channel.sentMessages[0].text;
-  assert.equal(help.includes("```text\n/progress [brief|detailed|silent]\n```"), false);
-  assert.ok(help.includes("```text\n/fff\n```"));
+  assert.equal(help.includes("`/progress [brief|detailed|silent]`"), false);
+  assert.ok(help.includes("- `/fff`:"));
 });
 
 test("Bridge suppresses progress sends briefly after a channel progress failure", async () => {
@@ -1859,6 +1864,7 @@ test("Bridge status reports running work and /stop cancels the current task", as
   await channel.emitText("/status");
   const statusMessage = channel.sentMessages.at(-1)?.text ?? "";
   assert.match(statusMessage, /处理状态: 正在处理/);
+  assert.match(statusMessage, /当前任务耗时: `(?:\d+s|\d+m \d{2}s|\d+h \d{2}m \d{2}s)`/);
   assert.match(statusMessage, /运行状态: 运行中/);
   assert.match(statusMessage, /可用操作: 发送 `\/stop`/);
 

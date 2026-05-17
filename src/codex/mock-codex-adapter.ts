@@ -68,10 +68,11 @@ export class MockCodexAdapter implements CodexAdapter {
     const promptText = codexInputPlainText(prompt);
     this.runs.push({ sessionId, prompt: promptText, collaborationMode: options.collaborationMode });
     const turnId = `turn-${Date.now()}`;
-    stored.status = this.withModelInfo({ type: "running", turnId }, this.modelPolicyForSession(sessionId));
-    yield { type: "turn.started", sessionId, turnId };
+    const startedAt = new Date().toISOString();
+    stored.status = this.withModelInfo({ type: "running", turnId, startedAt }, this.modelPolicyForSession(sessionId));
+    yield { type: "turn.started", sessionId, turnId, startedAt };
     if (promptText.includes("审批") || promptText.includes("approval")) {
-      stored.status = this.withModelInfo({ type: "waiting_approval", detail: "mock approval" }, this.modelPolicyForSession(sessionId));
+      stored.status = this.withModelInfo({ type: "waiting_approval", detail: "mock approval", startedAt }, this.modelPolicyForSession(sessionId));
       yield {
         type: "approval.requested",
         sessionId,
@@ -220,7 +221,7 @@ export class MockCodexAdapter implements CodexAdapter {
     const stored = this.sessions.get(sessionId);
     this.compactedSessions.push(sessionId);
     if (stored) {
-      stored.status = this.withModelInfo({ type: "running", task: "上下文压缩" }, this.modelPolicyForSession(sessionId));
+      stored.status = this.withModelInfo({ type: "running", task: "上下文压缩", startedAt: new Date().toISOString() }, this.modelPolicyForSession(sessionId));
     }
     if (this.compactDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.compactDelayMs));

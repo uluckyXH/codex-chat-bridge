@@ -220,12 +220,12 @@ export function formatRunPolicyForStatus(policy: CodexRunPolicy): string {
 
 export function formatGoalStatusLines(goal: CodexGoal | null | undefined): string[] {
   if (goal === undefined) return [];
-  if (!goal) return ["- 长期目标: 未设置"];
+  if (!goal) return ["- 长期目标 (/goal): 未设置"];
   const budget = goal.tokenBudget !== null && goal.tokenBudget > 0
     ? `\`${formatNumber(goal.tokensUsed)} / ${formatNumber(goal.tokenBudget)}\`（${formatPercent(goal.tokensUsed / goal.tokenBudget)}，剩余 ${formatNumber(Math.max(goal.tokenBudget - goal.tokensUsed, 0))}）`
     : `\`${formatNumber(goal.tokensUsed)}\``;
   return [
-    `- 长期目标: ${formatGoalStatusForUser(goal.status)} - ${truncateForChannel(goal.objective, 80)}`,
+    `- 长期目标 (/goal): ${formatGoalStatusForUser(goal.status)} - ${truncateForChannel(goal.objective, 80)}`,
     `- 目标 token: ${budget}`,
     `- 目标耗时: \`${formatDuration(goal.timeUsedSeconds)}\``,
     `- 目标更新时间: \`${formatGoalTimestamp(goal.updatedAt)}\``,
