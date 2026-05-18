@@ -72,11 +72,24 @@ chat-codex
 
 Codex CLI 官方安装指引：<https://developers.openai.com/codex/quickstart>
 
+方式一：npm，适合已安装 Node.js 的 macOS、Linux 和 Windows 用户。
+
 ```bash
 npm install -g @openai/codex
-# 或
-brew install codex
+codex
+```
 
+方式二：Homebrew，适合已安装 Homebrew 的 macOS 或 Linux 用户。
+
+```bash
+brew install codex
+codex
+```
+
+安装后确认命令可用：
+
+```bash
+codex --version
 codex
 ```
 

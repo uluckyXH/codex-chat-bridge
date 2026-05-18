@@ -71,11 +71,24 @@ Before first launch, set up the local Codex CLI. Chat-Codex talks to Codex by la
 
 Official Codex CLI setup guide: <https://developers.openai.com/codex/quickstart>
 
+Option 1: npm, suitable for macOS, Linux, and Windows users who already have Node.js installed.
+
 ```bash
 npm install -g @openai/codex
-# or
-brew install codex
+codex
+```
 
+Option 2: Homebrew, suitable for macOS or Linux users who already have Homebrew installed.
+
+```bash
+brew install codex
+codex
+```
+
+After installation, verify the command is available:
+
+```bash
+codex --version
 codex
 ```
 
