@@ -61,6 +61,9 @@
 - `new-chat-app-conversation-design.zh-CN.md`
   `/new chat` Codex App 对话会话设计。该能力当前保留为隐藏实现，不在聊天 `/help` 或 README 中公开展示；文档记录此前的技术验证、route/session 绑定语义、`thread/name/set` 标题同步和 preview 补齐方案。
 
+- `session-context-refresh-design.zh-CN.md`
+  Session 上下文外部更新检测与发送前刷新设计。说明独立模式下 Chat-Codex 如何在用户发消息前检测电脑端 Codex CLI 是否更新了同一 session，并在开关启用时重新加载后再投递消息；该方案是懒刷新，不是实时共享 app-server 模式，并要求兼容 macOS/Windows。
+
 - `session-list-pagination-design.zh-CN.md`
   Session 列表展示与分页设计。说明 `/sessions`、`/session`、`/sessions all`、`/resume` 和 `/use` 如何统一列表格式、排序、分页和编号选择交互，避免历史 session 很多时刷屏。
 

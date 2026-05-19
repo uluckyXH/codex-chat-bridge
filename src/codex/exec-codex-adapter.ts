@@ -6,6 +6,7 @@ import type {
   CodexProgressKind,
   CodexRunPolicyStatus,
   CodexSession,
+  CodexSessionReloadResult,
   CodexSessionStatus,
   CodexSessionSummary,
   StartSessionInput,
@@ -68,20 +69,30 @@ export class ExecCodexAdapter implements CodexAdapter {
   }
 
   async resumeSession(sessionId: string): Promise<CodexSession> {
+    return this.loadSession(sessionId, false);
+  }
+
+  async reloadSession(sessionId: string): Promise<CodexSessionReloadResult> {
+    const session = await this.loadSession(sessionId, true);
+    return { session, reloadedAt: new Date().toISOString() };
+  }
+
+  private async loadSession(sessionId: string, forceReload: boolean): Promise<CodexSession> {
     const stored = this.sessions.get(sessionId);
-    if (stored) return stored.session;
+    if (stored && !forceReload) return stored.session;
     const now = new Date().toISOString();
     const discovered = findCodexSessionById(sessionId, { codexHome: this.codexHome });
     const session: CodexSession = {
       id: sessionId,
-      cwd: discovered?.cwd ?? process.cwd(),
-      title: discovered ? displayCodexSessionTitle(discovered) ?? `codex:${sessionId}` : `codex:${sessionId}`,
-      createdAt: discovered?.updatedAt ?? now,
+      cwd: discovered?.cwd ?? stored?.session.cwd ?? process.cwd(),
+      title: discovered ? displayCodexSessionTitle(discovered) ?? stored?.session.title ?? `codex:${sessionId}` : stored?.session.title ?? `codex:${sessionId}`,
+      createdAt: stored?.session.createdAt ?? discovered?.updatedAt ?? now,
     };
     this.sessions.set(session.id, {
       session,
-      status: { type: "idle" },
-      actualThreadId: sessionId,
+      routeKey: stored?.routeKey,
+      status: stored?.status.type === "running" || stored?.status.type === "waiting_approval" ? stored.status : { type: "idle" },
+      actualThreadId: stored?.actualThreadId ?? sessionId,
       updatedAt: now,
     });
     if (!this.sessionRunPolicies.has(session.id)) {

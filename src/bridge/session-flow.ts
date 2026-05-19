@@ -2,6 +2,7 @@ import type { CodexAdapter, CodexCollaborationMode, CodexSession } from "../code
 import type { ChannelMessage, ChannelTarget } from "../protocol/channel.js";
 import { pendingBindingOwnerRouteKey } from "../state/memory-state-store.js";
 import type { MemoryStateStore } from "../state/memory-state-store.js";
+import type { SessionContextSnapshotObservedBy } from "../state/persistent-state-types.js";
 import type {
   BindSessionResult,
   InitialRouteBinding,
@@ -41,6 +42,11 @@ export interface BridgeSessionFlowOptions {
   hasRouteCollaborationMode(routeKey: string): boolean;
   applyRouteCollaborationModeToSession(routeKey: string, sessionId: string): void;
   syncRouteCollaborationModeFromSession(routeKey: string, sessionId: string): CodexCollaborationMode;
+  recordSessionContextSnapshot?(sessionId: string, observedBy: SessionContextSnapshotObservedBy): void | Promise<void>;
+}
+
+export interface EnsureSessionOptions {
+  recordResumeSnapshot?: boolean;
 }
 
 export class BridgeSessionFlow {
@@ -55,6 +61,7 @@ export class BridgeSessionFlow {
   private readonly hasRouteCollaborationMode: BridgeSessionFlowOptions["hasRouteCollaborationMode"];
   private readonly applyRouteCollaborationModeToSession: BridgeSessionFlowOptions["applyRouteCollaborationModeToSession"];
   private readonly syncRouteCollaborationModeFromSession: BridgeSessionFlowOptions["syncRouteCollaborationModeFromSession"];
+  private readonly recordSessionContextSnapshot?: BridgeSessionFlowOptions["recordSessionContextSnapshot"];
   private readonly selections = new Map<string, SessionSelectionState>();
   private pendingInitialRouteBinding?: InitialRouteBinding;
   private pendingInitialRouteKey?: string;
@@ -72,6 +79,7 @@ export class BridgeSessionFlow {
     this.hasRouteCollaborationMode = options.hasRouteCollaborationMode;
     this.applyRouteCollaborationModeToSession = options.applyRouteCollaborationModeToSession;
     this.syncRouteCollaborationModeFromSession = options.syncRouteCollaborationModeFromSession;
+    this.recordSessionContextSnapshot = options.recordSessionContextSnapshot;
   }
 
   hasSessionSelection(routeKey: string): boolean {
@@ -97,6 +105,7 @@ export class BridgeSessionFlow {
     this.selections.delete(message.routeKey);
     this.clearPendingInitialRouteBindingIfApplies(message);
     this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
+    await this.recordSnapshot(session.id, "bind");
     await this.delivery.sendText(target, [
       "已创建新 Codex 会话",
       `Session: ${session.id}`,
@@ -123,13 +132,14 @@ export class BridgeSessionFlow {
     this.selections.delete(message.routeKey);
     this.clearPendingInitialRouteBindingIfApplies(message);
     this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
+    await this.recordSnapshot(session.id, "bind");
     const titleSync = await this.syncAppConversationTitle(session.id, title);
     const previewSync = await this.syncAppConversationPreview(session.id, options.firstPrompt || title);
     await this.delivery.sendText(target, this.newAppChatSessionText(session, title, titleSync, previewSync, Boolean(options.firstPrompt)));
     return session;
   }
 
-  async ensureSession(message: ChannelMessage): Promise<CodexSession> {
+  async ensureSession(message: ChannelMessage, options: EnsureSessionOptions = {}): Promise<CodexSession> {
     const binding = this.state.getBinding(message.routeKey);
     if (binding) {
       const stored = this.state.getSession(binding.sessionId);
@@ -140,6 +150,9 @@ export class BridgeSessionFlow {
         throw new Error(`Codex session is owned by another route: ${activated.owner?.ownerRouteKey ?? "unknown"}`);
       }
       this.applyStoredSessionRunPolicy(session.id);
+      if (options.recordResumeSnapshot ?? true) {
+        await this.recordSnapshot(session.id, "resume");
+      }
       return session;
     }
     if (this.shouldConsumePendingInitialRouteBinding(message)) {
@@ -153,6 +166,7 @@ export class BridgeSessionFlow {
     this.state.bindSession(message.routeKey, session);
     this.applyStoredSessionRunPolicy(session.id);
     this.applyRouteCollaborationModeToSession(message.routeKey, session.id);
+    await this.recordSnapshot(session.id, "bind");
     return session;
   }
 
@@ -282,6 +296,7 @@ export class BridgeSessionFlow {
       }
       const mode = this.syncRouteCollaborationModeFromSession(message.routeKey, session.id);
       this.applyStoredSessionRunPolicy(session.id);
+      await this.recordSnapshot(session.id, "bind");
       this.selections.delete(message.routeKey);
       this.clearPendingInitialRouteBindingIfApplies(message);
       await this.delivery.sendText(target, [
@@ -321,6 +336,10 @@ export class BridgeSessionFlow {
     } catch (error) {
       return { type: "failed", message: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  private async recordSnapshot(sessionId: string, observedBy: SessionContextSnapshotObservedBy): Promise<void> {
+    await this.recordSessionContextSnapshot?.(sessionId, observedBy);
   }
 
   private newAppChatSessionText(

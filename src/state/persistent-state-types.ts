@@ -1,5 +1,7 @@
 import type { ConversationKind } from "../protocol/channel.js";
 import type { CodexRunPolicy } from "../codex/codex-cli.js";
+import type { CodexSessionContextFingerprint } from "../codex/session-context-fingerprint.js";
+import type { ContextRefreshPolicy } from "../context-refresh/types.js";
 
 export const LOCAL_STATE_SCHEMA_VERSION = 1;
 
@@ -15,6 +17,7 @@ export interface RouteIdentityRecord {
 export interface RoutePolicyRecord {
   unboundRoute?: string;
   progressMode?: string;
+  contextRefresh?: ContextRefreshPolicy;
 }
 
 export interface RouteRecord {
@@ -63,6 +66,26 @@ export interface SessionPoliciesDocument {
   schemaVersion: number;
   updatedAt: string;
   policies: SessionPolicyRecord[];
+}
+
+export type SessionContextSnapshotObservedBy =
+  | "bind"
+  | "resume"
+  | "chat-codex-turn"
+  | "external-refresh";
+
+export interface SessionContextSnapshotRecord {
+  sessionId: string;
+  fingerprint: CodexSessionContextFingerprint;
+  observedBy: SessionContextSnapshotObservedBy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionContextSnapshotsDocument {
+  schemaVersion: number;
+  updatedAt: string;
+  snapshots: SessionContextSnapshotRecord[];
 }
 
 export type PendingSessionBinding =
@@ -130,6 +153,9 @@ export interface BridgeConfigDocument {
     permission?: string;
     progressMode?: string;
     maxConcurrentTurns?: number | null;
+    independentMode?: {
+      contextRefresh?: ContextRefreshPolicy;
+    };
   };
 }
 

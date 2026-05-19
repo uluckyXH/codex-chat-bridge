@@ -25,6 +25,7 @@ export class AppServerRpcClient {
   private stderr = "";
   private initialized?: Promise<void>;
   private stopping = false;
+  private processGeneration = 0;
 
   constructor(options: AppServerRpcClientOptions) {
     this.codexCommand = typeof options.codexBin === "string" ? resolveCodexCommand({ codexBin: options.codexBin }) : options.codexBin;
@@ -41,6 +42,7 @@ export class AppServerRpcClient {
 
   stop(): void {
     this.stopping = true;
+    this.processGeneration += 1;
     for (const pending of this.pendingResponses.values()) {
       pending.reject(new Error("codex app-server stopped"));
     }
@@ -106,6 +108,7 @@ export class AppServerRpcClient {
 
   private async startProcessAndInitialize(): Promise<void> {
     this.stopping = false;
+    const generation = ++this.processGeneration;
     this.stderr = "";
     this.child = spawnCodex(this.codexCommand, ["app-server", "--listen", "stdio://"], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -114,9 +117,9 @@ export class AppServerRpcClient {
     this.child.stderr?.on("data", (chunk: string) => {
       this.stderr += chunk;
     });
-    this.child.on("error", (error) => this.handleProcessEnd(error));
+    this.child.on("error", (error) => this.handleProcessEnd(error, generation));
     this.child.on("close", (code) => {
-      this.handleProcessEnd(new Error(this.stderr.trim() || `codex app-server exited with code ${code}`));
+      this.handleProcessEnd(new Error(this.stderr.trim() || `codex app-server exited with code ${code}`), generation);
     });
     if (!this.child.stdout || !this.child.stdin) throw new Error("failed to start codex app-server stdio");
     this.stdoutLines = createInterface({ input: this.child.stdout });
@@ -139,7 +142,8 @@ export class AppServerRpcClient {
     this.writeMessage({ method: "initialized" });
   }
 
-  private handleProcessEnd(error: Error): void {
+  private handleProcessEnd(error: Error, generation: number): void {
+    if (generation !== this.processGeneration) return;
     if (this.stopping) {
       this.pendingResponses.clear();
       this.initialized = undefined;

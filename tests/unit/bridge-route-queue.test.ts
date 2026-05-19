@@ -2,17 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ApprovalManager } from "../../src/approvals/approval-manager.js";
 import { BridgeDelivery } from "../../src/bridge/delivery.js";
+import { SessionContextRefreshManager } from "../../src/bridge/context-refresh.js";
 import { BridgeRouteQueue } from "../../src/bridge/route-queue.js";
 import { BridgeSessionFlow } from "../../src/bridge/session-flow.js";
 import { UnlimitedTurnScheduler } from "../../src/bridge/turn-scheduler.js";
 import { MockCodexAdapter } from "../../src/codex/mock-codex-adapter.js";
 import type { CodexEvent, CodexPromptInput } from "../../src/codex/types.js";
+import type { CodexSessionContextFingerprint } from "../../src/codex/session-context-fingerprint.js";
 import { codexInputPlainText } from "../../src/codex/input.js";
 import { SilentLogger } from "../../src/logging/logger.js";
 import type { ChannelRegistry } from "../../src/channels/registry.js";
 import type { ChannelMessage, ChannelTarget } from "../../src/protocol/channel.js";
 import { DEFAULT_CHANNEL_DELIVERY_POLICY } from "../../src/protocol/delivery-policy.js";
 import { MemoryStateStore } from "../../src/state/memory-state-store.js";
+import { SessionBindings } from "../../src/state/session-bindings.js";
 
 test("BridgeRouteQueue forwards prompts and sends final replies", async () => {
   const fixture = routeQueueFixture();
@@ -43,9 +46,61 @@ test("BridgeRouteQueue serializes same-route prompts and can clear queued work",
   assert.deepEqual(codex.promptRuns, ["第一条"]);
 });
 
-function routeQueueFixture(options: { codex?: MockCodexAdapter } = {}) {
+test("BridgeRouteQueue reloads externally updated context before running prompt", async () => {
+  const fixture = routeQueueFixture({ contextRefreshMode: "reload" });
+  const session = await fixture.codex.startSession({ routeKey: "route-a", cwd: "/repo" });
+  fixture.state.bindSession("route-a", session);
+  fixture.state.setSessionContextSnapshot({ sessionId: session.id, observedBy: "bind", fingerprint: fp(session.id, 10, 100) });
+  fixture.setFingerprint(fp(session.id, 20, 120));
+
+  await fixture.queue.enqueuePrompt(message("route-a", "继续"), target("route-a"), "继续");
+  await fixture.queue.waitForWorkers();
+
+  assert.deepEqual(fixture.codex.reloadedSessions, [session.id]);
+  assert.equal(fixture.codex.runs[0]?.prompt, "继续");
+  assert.ok(fixture.sentTexts.some((text) => text.includes("已在发送前重新加载")));
+});
+
+test("BridgeRouteQueue keeps persisted snapshot for refresh check when auto-resuming", async () => {
+  const codex = new MockCodexAdapter();
+  const session = await codex.startSession({ routeKey: "route-a", cwd: "/repo" });
+  const timestamp = "2026-05-18T00:00:00.000Z";
+  const state = new MemoryStateStore(new SessionBindings({
+    active: [{ routeKey: "route-a", sessionId: session.id, createdAt: timestamp, updatedAt: timestamp }],
+    owners: [{ sessionId: session.id, ownerRouteKey: "route-a", claimedAt: timestamp, updatedAt: timestamp }],
+  }));
+  state.setSessionContextSnapshot({ sessionId: session.id, observedBy: "chat-codex-turn", fingerprint: fp(session.id, 10, 100) });
+  const fixture = routeQueueFixture({ codex, state, contextRefreshMode: "reload" });
+  fixture.setFingerprint(fp(session.id, 20, 120));
+
+  await fixture.queue.enqueuePrompt(message("route-a", "继续"), target("route-a"), "继续");
+  await fixture.queue.waitForWorkers();
+
+  assert.deepEqual(fixture.codex.reloadedSessions, [session.id]);
+  assert.equal(fixture.codex.runs[0]?.prompt, "继续");
+  assert.ok(fixture.sentTexts.some((text) => text.includes("已在发送前重新加载")));
+});
+
+test("BridgeRouteQueue stops prompt when external update reload fails", async () => {
+  const fixture = routeQueueFixture({ contextRefreshMode: "reload" });
+  fixture.state.bindSession("route-a", {
+    id: "missing-session",
+    cwd: "/repo",
+    createdAt: "2026-05-18T00:00:00.000Z",
+  });
+  fixture.state.setSessionContextSnapshot({ sessionId: "missing-session", observedBy: "bind", fingerprint: fp("missing-session", 10, 100) });
+  fixture.setFingerprint(fp("missing-session", 20, 120));
+
+  await fixture.queue.enqueuePrompt(message("route-a", "继续"), target("route-a"), "继续");
+  await fixture.queue.waitForWorkers();
+
+  assert.equal(fixture.codex.runs.length, 0);
+  assert.ok(fixture.sentTexts.some((text) => text.includes("本条消息没有发送")));
+});
+
+function routeQueueFixture(options: { codex?: MockCodexAdapter; state?: MemoryStateStore; contextRefreshMode?: "off" | "detect" | "reload" } = {}) {
   const codex = options.codex ?? new MockCodexAdapter();
-  const state = new MemoryStateStore();
+  const state = options.state ?? new MemoryStateStore();
   const approvals = new ApprovalManager();
   const sentTexts: string[] = [];
   const delivery = new BridgeDelivery({
@@ -83,6 +138,15 @@ function routeQueueFixture(options: { codex?: MockCodexAdapter } = {}) {
     applyRouteCollaborationModeToSession: () => undefined,
     syncRouteCollaborationModeFromSession: () => "default",
   });
+  let currentFingerprint: CodexSessionContextFingerprint | undefined;
+  const contextRefresh = options.contextRefreshMode
+    ? new SessionContextRefreshManager({
+        state,
+        codex,
+        defaultPolicy: { mode: options.contextRefreshMode },
+        readFingerprint: () => currentFingerprint,
+      })
+    : undefined;
   const queue = new BridgeRouteQueue({
     codex,
     state,
@@ -94,8 +158,17 @@ function routeQueueFixture(options: { codex?: MockCodexAdapter } = {}) {
     currentCollaborationMode: () => undefined,
     deliveryPolicyFor: () => DEFAULT_CHANNEL_DELIVERY_POLICY,
     shouldDeliverProgressWithPolicy: () => true,
+    contextRefresh,
   });
-  return { codex, queue, sentTexts };
+  return {
+    codex,
+    state,
+    queue,
+    sentTexts,
+    setFingerprint: (fingerprint: CodexSessionContextFingerprint | undefined) => {
+      currentFingerprint = fingerprint;
+    },
+  };
 }
 
 class BlockingCodexAdapter extends MockCodexAdapter {
@@ -139,6 +212,17 @@ function target(routeKey: string): ChannelTarget {
     routeKey,
     conversation: { id: routeKey, kind: "direct" },
     recipient: { id: "user" },
+  };
+}
+
+function fp(sessionId: string, updatedAtMs: number, rolloutSize: number): CodexSessionContextFingerprint {
+  return {
+    sessionId,
+    detectedAt: "2026-05-18T00:00:00.000Z",
+    source: "rollout",
+    updatedAtMs,
+    rolloutSize,
+    rolloutMtimeMs: updatedAtMs,
   };
 }
 

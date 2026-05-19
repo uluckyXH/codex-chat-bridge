@@ -62,6 +62,10 @@ export class AppServerTurnController {
     return this.turnQueues.get(turnId);
   }
 
+  hasActiveTurns(): boolean {
+    return this.turnQueues.size > 0;
+  }
+
   pushTurnEvent(turnId: string, event: CodexEvent): void {
     if (this.closedTurnIds.has(turnId)) return;
     const turn = this.turnQueues.get(turnId);

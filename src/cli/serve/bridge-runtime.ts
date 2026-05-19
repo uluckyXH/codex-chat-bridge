@@ -30,6 +30,8 @@ export async function startServeBridge(
   const runtimeLogs = display.tui ? new RuntimeLogStore() : undefined;
   const logger = runtimeLogs ? new RuntimeTuiLogger(runtimeLogs) : new ConsoleLogger(false);
   const codex = createRealCodexAdapter(startup);
+  const contextRefresh = startup.contextRefresh ?? channelActions.configStore.getContextRefreshDefaults();
+  startup.contextRefresh = contextRefresh;
   const bridge = new Bridge({
     channels: new ChannelRegistry({ channels: adapters, logger }),
     codex,
@@ -40,6 +42,7 @@ export async function startServeBridge(
     initialRouteBinding: plan.initialRouteBinding,
     unboundRoutePolicy: plan.unboundRoutePolicy,
     progressMode: startup.progressMode,
+    contextRefresh: { defaultPolicy: contextRefresh },
     routeTrustMode: "real_channels",
     turnScheduler: startup.maxConcurrentTurns ? new LimitedTurnScheduler(startup.maxConcurrentTurns) : undefined,
   });

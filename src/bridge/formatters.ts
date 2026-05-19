@@ -106,6 +106,11 @@ export function isRouteBusyMutationCommand(name: string, args: string[], rawText
     case "default":
     case "compact":
       return true;
+    case "context-refresh":
+    case "ctx-refresh":
+    case "context":
+    case "ctx":
+      return args.length > 0;
     case "permission":
     case "permissions":
     case "perm":

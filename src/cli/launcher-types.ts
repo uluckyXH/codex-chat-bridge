@@ -1,5 +1,6 @@
 import type { ProgressDeliveryMode, UnboundRoutePolicy, InitialRouteBinding } from "../bridge/bridge.js";
 import type { CodexCliStatus, CodexPermissionMode, CodexRunPolicy } from "../codex/codex-cli.js";
+import type { ContextRefreshPolicy } from "../context-refresh/types.js";
 import type { FirstRouteBindingChoice } from "./serve-wizard.js";
 
 export interface ServeStartupOptions {
@@ -22,6 +23,7 @@ export interface PreparedServeStartup {
   cwd: string;
   codexStatus?: CodexCliStatus;
   progressMode?: ProgressDeliveryMode;
+  contextRefresh?: ContextRefreshPolicy;
   maxConcurrentTurns?: number;
 }
 

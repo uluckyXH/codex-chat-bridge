@@ -3,6 +3,7 @@ import { formatCodexSessionTitleForDisplay } from "../../codex/codex-cli.js";
 import { formatSessionActiveTime } from "../actions/binding-actions.js";
 import type { PreparedServeStartup } from "../launcher-types.js";
 import { formatPermissionModeForUser } from "../serve-wizard.js";
+import { formatContextRefreshModeForUser } from "../../context-refresh/types.js";
 import { formatCodexStatusForCli } from "./summary.js";
 
 export function printRuntimeSummary(
@@ -16,6 +17,7 @@ export function printRuntimeSummary(
   console.log(`- Codex CLI: ${formatCodexStatusForCli(startup.codexStatus)}`);
   console.log(`- 工作目录: ${startup.cwd}`);
   console.log(`- 新 session 默认权限: ${formatPolicyForCli(startup.policy)}`);
+  if (startup.contextRefresh) console.log(`- 独立模式上下文刷新: ${formatContextRefreshModeForUser(startup.contextRefresh.mode)}`);
   console.log("- 退出: Ctrl+C");
 }
 

@@ -10,6 +10,7 @@ import { stripBridgeSendFileRefs } from "./media-extractor.js";
 import type { TurnScheduler } from "./turn-scheduler.js";
 import { TurnSchedulerAbortError } from "./turn-scheduler.js";
 import type { BridgeDelivery } from "./delivery.js";
+import type { SessionContextRefreshManager } from "./context-refresh.js";
 import { BridgeProgressDelivery } from "./progress-delivery.js";
 import type { BridgeSessionFlow } from "./session-flow.js";
 import {
@@ -35,6 +36,7 @@ export interface BridgeRouteQueueOptions {
     kind: CodexProgressKind | undefined,
   ): boolean;
   progressDelivery?: BridgeProgressDelivery;
+  contextRefresh?: SessionContextRefreshManager;
 }
 
 export class BridgeRouteQueue {
@@ -48,6 +50,7 @@ export class BridgeRouteQueue {
   private readonly hasBackgroundTurnForRoute: BridgeRouteQueueOptions["hasBackgroundTurnForRoute"];
   private readonly currentCollaborationMode: BridgeRouteQueueOptions["currentCollaborationMode"];
   private readonly deliveryPolicyFor: BridgeRouteQueueOptions["deliveryPolicyFor"];
+  private readonly contextRefresh?: SessionContextRefreshManager;
   private readonly progressDelivery: BridgeProgressDelivery;
   private readonly queues = new Map<string, QueuedPrompt[]>();
   private readonly workers = new Map<string, Promise<void>>();
@@ -64,6 +67,7 @@ export class BridgeRouteQueue {
     this.hasBackgroundTurnForRoute = options.hasBackgroundTurnForRoute;
     this.currentCollaborationMode = options.currentCollaborationMode;
     this.deliveryPolicyFor = options.deliveryPolicyFor;
+    this.contextRefresh = options.contextRefresh;
     this.progressDelivery = options.progressDelivery ?? new BridgeProgressDelivery({
       delivery: this.delivery,
       transcript: this.transcript,
@@ -172,7 +176,20 @@ export class BridgeRouteQueue {
     sendFile: boolean,
     collaborationMode: CodexCollaborationMode | undefined,
   ): Promise<void> {
-    const session = await this.sessionFlow.ensureSession(message);
+    const refreshMode = this.contextRefresh?.effectivePolicy(message.routeKey).policy.mode;
+    const session = await this.sessionFlow.ensureSession(message, {
+      recordResumeSnapshot: !refreshMode || refreshMode === "off",
+    });
+    const refreshResult = await this.contextRefresh?.beforeRun({
+      routeKey: message.routeKey,
+      sessionId: session.id,
+    });
+    if (refreshResult?.type === "detect_only" || refreshResult?.type === "reloaded") {
+      await this.delivery.sendText(target, refreshResult.notice);
+    } else if (refreshResult?.type === "reload_failed") {
+      await this.delivery.sendText(target, refreshResult.errorText);
+      return;
+    }
     const promptText = codexInputText(prompt);
     const abortController = new AbortController();
     this.abortControllers.set(message.routeKey, abortController);
@@ -251,6 +268,7 @@ export class BridgeRouteQueue {
         });
       }, { signal: abortController.signal });
     } finally {
+      await this.contextRefresh?.recordAfterRun(session.id);
       await this.progressDelivery.flushRoute(message.routeKey);
       this.progressDelivery.clearRoute(message.routeKey);
       if (this.abortControllers.get(message.routeKey) === abortController) {

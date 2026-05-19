@@ -14,6 +14,7 @@ import type {
   CodexSession,
   CodexSessionBaseStatus,
   CodexSessionModelInfo,
+  CodexSessionReloadResult,
   CodexSessionStatus,
   CodexSessionSummary,
   CodexRunOptions,
@@ -37,6 +38,7 @@ export class MockCodexAdapter implements CodexAdapter {
   readonly sessionTitles: Array<{ sessionId: string; title: string }> = [];
   readonly sessionPreviews: Array<{ sessionId: string; preview: string }> = [];
   readonly compactedSessions: string[] = [];
+  readonly reloadedSessions: string[] = [];
   compactDelayMs = 0;
   compactError: Error | undefined;
 
@@ -74,6 +76,12 @@ export class MockCodexAdapter implements CodexAdapter {
     const stored = this.sessions.get(sessionId);
     if (!stored) throw new Error(`mock session not found: ${sessionId}`);
     return stored.session;
+  }
+
+  async reloadSession(sessionId: string): Promise<CodexSessionReloadResult> {
+    const session = await this.resumeSession(sessionId);
+    this.reloadedSessions.push(sessionId);
+    return { session, reloadedAt: new Date().toISOString() };
   }
 
   async *run(sessionId: string, prompt: CodexPromptInput, options: CodexRunOptions = {}): AsyncIterable<CodexEvent> {

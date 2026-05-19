@@ -13,6 +13,9 @@ import {
   type RoutesDocument,
   type PendingBindingRecord,
   type PendingBindingsDocument,
+  type SessionContextSnapshotRecord,
+  type SessionContextSnapshotsDocument,
+  type SessionContextSnapshotObservedBy,
   type SessionOwnerRecord,
   type SessionOwnersDocument,
   type SessionPolicyRecord,
@@ -20,6 +23,8 @@ import {
   type TrustedRouteRecord,
   type TrustedRoutesDocument,
 } from "./persistent-state-types.js";
+import type { CodexSessionContextFingerprint } from "../codex/session-context-fingerprint.js";
+import { cloneContextRefreshPolicy, normalizeContextRefreshPolicy, type ContextRefreshPolicy } from "../context-refresh/types.js";
 
 export interface FileStateStoreOptions {
   rootDir?: string;
@@ -39,6 +44,7 @@ interface LoadedFileState {
   routes: Map<string, RouteRecord>;
   bindings: SessionBindings;
   sessionPolicies: Map<string, SessionPolicyRecord>;
+  sessionContextSnapshots: Map<string, SessionContextSnapshotRecord>;
   pendingBindings: Map<string, PendingBindingRecord>;
   trustedRoutes: Map<string, TrustedRouteRecord>;
 }
@@ -47,25 +53,35 @@ export class FileStateStore extends MemoryStateStore {
   readonly rootDir: string;
   private routes = new Map<string, RouteRecord>();
   private sessionPolicies = new Map<string, SessionPolicyRecord>();
+  private persistedSessionContextSnapshots = new Map<string, SessionContextSnapshotRecord>();
   private persistedPendingBindings = new Map<string, PendingBindingRecord>();
   private persistedTrustedRoutes = new Map<string, TrustedRouteRecord>();
   private readonly routesPath: string;
   private readonly sessionOwnersPath: string;
   private readonly sessionPoliciesPath: string;
+  private readonly sessionContextSnapshotsPath: string;
   private readonly pendingBindingsPath: string;
   private readonly trustedRoutesPath: string;
 
   constructor(options: FileStateStoreOptions = {}) {
     const loaded = loadFileState(options);
-    super(loaded.bindings, [...loaded.sessionPolicies.values()], [...loaded.pendingBindings.values()], [...loaded.trustedRoutes.values()]);
+    super(
+      loaded.bindings,
+      [...loaded.sessionPolicies.values()],
+      [...loaded.pendingBindings.values()],
+      [...loaded.trustedRoutes.values()],
+      [...loaded.sessionContextSnapshots.values()],
+    );
     this.rootDir = loaded.rootDir;
     this.routes = loaded.routes;
     this.sessionPolicies = loaded.sessionPolicies;
+    this.persistedSessionContextSnapshots = loaded.sessionContextSnapshots;
     this.persistedPendingBindings = loaded.pendingBindings;
     this.persistedTrustedRoutes = loaded.trustedRoutes;
     this.routesPath = path.join(this.rootDir, "routes.json");
     this.sessionOwnersPath = path.join(this.rootDir, "session-owners.json");
     this.sessionPoliciesPath = path.join(this.rootDir, "session-policies.json");
+    this.sessionContextSnapshotsPath = path.join(this.rootDir, "session-context-snapshots.json");
     this.pendingBindingsPath = path.join(this.rootDir, "pending-bindings.json");
     this.trustedRoutesPath = path.join(this.rootDir, "trusted-routes.json");
   }
@@ -171,6 +187,74 @@ export class FileStateStore extends MemoryStateStore {
         ...policy,
         runPolicy: { ...policy.runPolicy },
       }))
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  }
+
+  override getRouteContextRefreshPolicy(routeKey: string): ContextRefreshPolicy | undefined {
+    return cloneContextRefreshPolicy(this.routes.get(routeKey)?.policy?.contextRefresh) ?? super.getRouteContextRefreshPolicy(routeKey);
+  }
+
+  override setRouteContextRefreshPolicy(routeKey: string, policy: ContextRefreshPolicy): void {
+    const normalized = normalizeContextRefreshPolicy(policy);
+    if (!normalized) throw new Error("invalid context refresh policy");
+    super.setRouteContextRefreshPolicy(routeKey, normalized);
+    const existing = this.routes.get(routeKey);
+    const now = new Date().toISOString();
+    const parsed = parseRouteKey(routeKey);
+    this.routes.set(routeKey, {
+      routeKey,
+      channelId: existing?.channelId ?? parsed.channelId,
+      channelType: existing?.channelType ?? inferChannelType(parsed.channelId),
+      accountId: existing?.accountId ?? parsed.accountId,
+      conversationKind: existing?.conversationKind ?? parsed.conversationKind,
+      conversationId: existing?.conversationId ?? parsed.conversationId,
+      activeSessionId: existing?.activeSessionId,
+      displayName: existing?.displayName,
+      identity: existing?.identity,
+      policy: {
+        ...existing?.policy,
+        contextRefresh: normalized,
+      },
+      lastSeenAt: existing?.lastSeenAt,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    this.persistRoutes();
+  }
+
+  override clearRouteContextRefreshPolicy(routeKey: string): void {
+    super.clearRouteContextRefreshPolicy(routeKey);
+    const existing = this.routes.get(routeKey);
+    if (!existing?.policy?.contextRefresh) return;
+    const { contextRefresh: _contextRefresh, ...remainingPolicy } = existing.policy;
+    this.routes.set(routeKey, {
+      ...existing,
+      policy: Object.keys(remainingPolicy).length > 0 ? remainingPolicy : undefined,
+      updatedAt: new Date().toISOString(),
+    });
+    this.persistRoutes();
+  }
+
+  override getSessionContextSnapshot(sessionId: string): SessionContextSnapshotRecord | undefined {
+    const snapshot = this.persistedSessionContextSnapshots.get(sessionId);
+    return snapshot ? cloneSessionContextSnapshot(snapshot) : super.getSessionContextSnapshot(sessionId);
+  }
+
+  override setSessionContextSnapshot(input: {
+    sessionId: string;
+    fingerprint: CodexSessionContextFingerprint;
+    observedBy: SessionContextSnapshotObservedBy;
+    observedAt?: string;
+  }): SessionContextSnapshotRecord {
+    const record = super.setSessionContextSnapshot(input);
+    this.persistedSessionContextSnapshots.set(record.sessionId, cloneSessionContextSnapshot(record));
+    this.persistSessionContextSnapshots();
+    return record;
+  }
+
+  override listSessionContextSnapshots(): SessionContextSnapshotRecord[] {
+    return [...this.persistedSessionContextSnapshots.values()]
+      .map(cloneSessionContextSnapshot)
       .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   }
 
@@ -284,6 +368,7 @@ export class FileStateStore extends MemoryStateStore {
     this.persistRoutes();
     this.persistSessionOwners();
     this.persistSessionPolicies();
+    this.persistSessionContextSnapshots();
     this.persistPendingBindings();
     this.persistTrustedRoutes();
   }
@@ -318,6 +403,14 @@ export class FileStateStore extends MemoryStateStore {
       updatedAt: new Date().toISOString(),
       policies: this.listSessionRunPolicies(),
     } satisfies SessionPoliciesDocument);
+  }
+
+  private persistSessionContextSnapshots(): void {
+    writeJsonFileAtomic(this.sessionContextSnapshotsPath, {
+      schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+      updatedAt: new Date().toISOString(),
+      snapshots: this.listSessionContextSnapshots(),
+    } satisfies SessionContextSnapshotsDocument);
   }
 
   private persistPendingBindings(): void {
@@ -357,6 +450,7 @@ function loadFileState(options: FileStateStoreOptions): LoadedFileState {
   const routes = loadRoutes(path.join(rootDir, "routes.json"));
   const owners = loadOwners(path.join(rootDir, "session-owners.json"));
   const sessionPolicies = loadSessionPolicies(path.join(rootDir, "session-policies.json"));
+  const sessionContextSnapshots = loadSessionContextSnapshots(path.join(rootDir, "session-context-snapshots.json"));
   const pendingBindings = loadPendingBindings(path.join(rootDir, "pending-bindings.json"));
   const trustedRoutes = loadTrustedRoutes(path.join(rootDir, "trusted-routes.json"));
   const active = [...routes.values()]
@@ -376,6 +470,7 @@ function loadFileState(options: FileStateStoreOptions): LoadedFileState {
     routes,
     bindings: new SessionBindings(snapshot),
     sessionPolicies,
+    sessionContextSnapshots,
     pendingBindings,
     trustedRoutes,
   };
@@ -386,7 +481,10 @@ function loadRoutes(filePath: string): Map<string, RouteRecord> {
   const routes = new Map<string, RouteRecord>();
   for (const route of Array.isArray(doc.routes) ? doc.routes : []) {
     if (!route.routeKey || !route.channelId || !route.accountId || !route.conversationKind || !route.conversationId) continue;
-    routes.set(route.routeKey, route);
+    routes.set(route.routeKey, {
+      ...route,
+      policy: normalizeRoutePolicy(route.policy),
+    });
   }
   return routes;
 }
@@ -410,6 +508,22 @@ function loadSessionPolicies(filePath: string): Map<string, SessionPolicyRecord>
     });
   }
   return policies;
+}
+
+function loadSessionContextSnapshots(filePath: string): Map<string, SessionContextSnapshotRecord> {
+  const doc = readJsonFile<SessionContextSnapshotsDocument>(filePath, emptySessionContextSnapshotsDocument());
+  const snapshots = new Map<string, SessionContextSnapshotRecord>();
+  for (const snapshot of Array.isArray(doc.snapshots) ? doc.snapshots : []) {
+    if (!snapshot.sessionId || !isContextFingerprint(snapshot.fingerprint)) continue;
+    snapshots.set(snapshot.sessionId, {
+      sessionId: snapshot.sessionId,
+      fingerprint: { ...snapshot.fingerprint, sessionId: snapshot.sessionId },
+      observedBy: isSnapshotObservedBy(snapshot.observedBy) ? snapshot.observedBy : "resume",
+      createdAt: snapshot.createdAt ?? new Date(0).toISOString(),
+      updatedAt: snapshot.updatedAt ?? snapshot.createdAt ?? new Date(0).toISOString(),
+    });
+  }
+  return snapshots;
 }
 
 function loadPendingBindings(filePath: string): Map<string, PendingBindingRecord> {
@@ -560,6 +674,39 @@ function isRunPolicy(value: unknown): value is CodexRunPolicy {
     || policy.sandbox === "danger-full-access";
 }
 
+function normalizeRoutePolicy(value: RouteRecord["policy"]): RouteRecord["policy"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const contextRefresh = normalizeContextRefreshPolicy(value.contextRefresh);
+  const next: RouteRecord["policy"] = {
+    unboundRoute: typeof value.unboundRoute === "string" ? value.unboundRoute : undefined,
+    progressMode: typeof value.progressMode === "string" ? value.progressMode : undefined,
+    contextRefresh,
+  };
+  return Object.values(next).some((item) => item !== undefined) ? next : undefined;
+}
+
+function isContextFingerprint(value: unknown): value is CodexSessionContextFingerprint {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fingerprint = value as { sessionId?: unknown; detectedAt?: unknown; source?: unknown };
+  return typeof fingerprint.sessionId === "string"
+    && typeof fingerprint.detectedAt === "string"
+    && (fingerprint.source === "sqlite"
+      || fingerprint.source === "rollout"
+      || fingerprint.source === "session_index"
+      || fingerprint.source === "unknown");
+}
+
+function isSnapshotObservedBy(value: unknown): value is SessionContextSnapshotObservedBy {
+  return value === "bind" || value === "resume" || value === "chat-codex-turn" || value === "external-refresh";
+}
+
+function cloneSessionContextSnapshot(record: SessionContextSnapshotRecord): SessionContextSnapshotRecord {
+  return {
+    ...record,
+    fingerprint: { ...record.fingerprint },
+  };
+}
+
 function emptyRoutesDocument(): RoutesDocument {
   return {
     schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
@@ -581,6 +728,14 @@ function emptySessionPoliciesDocument(): SessionPoliciesDocument {
     schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
     updatedAt: new Date(0).toISOString(),
     policies: [],
+  };
+}
+
+function emptySessionContextSnapshotsDocument(): SessionContextSnapshotsDocument {
+  return {
+    schemaVersion: LOCAL_STATE_SCHEMA_VERSION,
+    updatedAt: new Date(0).toISOString(),
+    snapshots: [],
   };
 }
 

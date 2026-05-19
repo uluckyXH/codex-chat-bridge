@@ -12,6 +12,7 @@ import type {
   CodexModelPolicy,
   CodexRunPolicyStatus,
   CodexSession,
+  CodexSessionReloadResult,
   CodexSessionStatus,
   CodexSessionSummary,
   CodexRunOptions,
@@ -160,18 +161,46 @@ export class AppServerCodexAdapter implements CodexAdapter {
 
   async resumeSession(sessionId: string): Promise<CodexSession> {
     await this.ensureStarted();
+    return this.loadSessionFromServer(sessionId, false);
+  }
+
+  async reloadSession(sessionId: string): Promise<CodexSessionReloadResult> {
+    const routeKey = this.sessionStore.get(sessionId)?.routeKey;
+    this.restartAppServerForReload();
+    const session = await this.loadSessionFromServer(sessionId, true, routeKey);
+    return { session, reloadedAt: new Date().toISOString() };
+  }
+
+  private restartAppServerForReload(): void {
+    if (this.turns.hasActiveTurns()) {
+      throw new Error("当前 app-server 仍有运行中的 Codex turn，不能安全重启并刷新上下文。请等待当前任务结束后重试。");
+    }
+    this.pendingApprovals.clear();
+    for (const waiter of this.compactWaiters.values()) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.reject(new Error("codex app-server restarting for session reload"));
+    }
+    this.compactWaiters.clear();
+    this.turns.closeAll();
+    this.sessionStore.clear();
+    this.rpc.stop();
+  }
+
+  private async loadSessionFromServer(sessionId: string, forceReload: boolean, routeKey?: string): Promise<CodexSession> {
     const stored = this.sessionStore.get(sessionId);
-    if (stored) return stored.session;
+    if (stored && !forceReload) return stored.session;
+    await this.ensureStarted();
     const discovered = findCodexSessionById(sessionId, { codexHome: this.codexHome });
     const modelPolicy = cloneModelPolicy(this.sessionModelPolicies.get(sessionId) ?? this.defaultModelPolicy);
+    const runPolicy = this.runPolicyForSession(sessionId);
     const response = await this.request<Record<string, unknown>>("thread/resume", {
       threadId: sessionId,
       model: modelPolicy.model,
       serviceTier: modelPolicy.serviceTier,
       cwd: discovered?.cwd ?? undefined,
-      approvalPolicy: approvalPolicyForRunPolicy(this.defaultRunPolicy),
-      approvalsReviewer: approvalsReviewerForRunPolicy(this.defaultRunPolicy),
-      sandbox: sandboxModeForRunPolicy(this.defaultRunPolicy),
+      approvalPolicy: approvalPolicyForRunPolicy(runPolicy),
+      approvalsReviewer: approvalsReviewerForRunPolicy(runPolicy),
+      sandbox: sandboxModeForRunPolicy(runPolicy),
     });
     const thread = objectValue(response.thread);
     const cwd = stringValue(response.cwd) ?? stringValue(thread.cwd) ?? discovered?.cwd ?? process.cwd();
@@ -185,6 +214,7 @@ export class AppServerCodexAdapter implements CodexAdapter {
     const model = modelInfoWithPolicy(baseModel, modelPolicy);
     this.sessionStore.set(session.id, {
       session,
+      routeKey: stored?.routeKey ?? routeKey,
       status: { type: "idle", ...(model ? { model } : {}) },
       updatedAt: new Date().toISOString(),
       ...(baseModel ? { baseModel } : {}),

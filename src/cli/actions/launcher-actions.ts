@@ -12,6 +12,13 @@ import { AppServerCodexAdapter } from "../../codex/app-server-codex-adapter.js";
 import { ExecCodexAdapter } from "../../codex/exec-codex-adapter.js";
 import type { CodexAdapter } from "../../codex/types.js";
 import { checkNewSessionWorkdir, resolveNewSessionWorkdir } from "../../codex/workdir.js";
+import {
+  contextRefreshPolicyOrDefault,
+  formatContextRefreshEffectivePolicyForUser,
+  formatContextRefreshModeForUser,
+  type ContextRefreshEffectivePolicy,
+  type ContextRefreshPolicy,
+} from "../../context-refresh/types.js";
 import type { ChannelLoginResult } from "../../protocol/channel.js";
 import { FileStateStore } from "../../state/file-state-store.js";
 import { pendingBindingOwnerRouteKey } from "../../state/memory-state-store.js";
@@ -40,6 +47,7 @@ export interface LauncherDashboard {
   pendingBindings: PendingBindingRecord[];
   pairing: PairingDashboardSummary;
   routes: ServeRouteSummary;
+  contextRefreshDefault: ContextRefreshPolicy;
   startup: PreparedServeStartup;
   canStart: StartValidation;
 }
@@ -123,6 +131,7 @@ export class LauncherActions {
       pendingBindings: state.listPendingBindings(),
       pairing: this.pairingSummary(state, bindings),
       routes: this.routeSummary(state),
+      contextRefreshDefault: this.getContextRefreshDefaults(),
       startup: this.startup,
       canStart: this.validateStart(channels),
     };
@@ -349,6 +358,39 @@ export class LauncherActions {
     return this.startup.policy;
   }
 
+  getContextRefreshDefaults(): ContextRefreshPolicy {
+    return contextRefreshPolicyOrDefault(this.startup.contextRefresh ?? this.channelActions.configStore.getContextRefreshDefaults());
+  }
+
+  setContextRefreshDefaults(policy: ContextRefreshPolicy): ContextRefreshPolicy {
+    const saved = this.channelActions.configStore.setContextRefreshDefaults(policy);
+    this.startup.contextRefresh = saved;
+    return saved;
+  }
+
+  getRouteContextRefreshPolicy(routeKey: string): ContextRefreshPolicy | undefined {
+    return this.stateStore().getRouteContextRefreshPolicy(routeKey);
+  }
+
+  getRouteContextRefreshEffectivePolicy(routeKey: string): ContextRefreshEffectivePolicy {
+    const routePolicy = this.getRouteContextRefreshPolicy(routeKey);
+    if (routePolicy) return { policy: routePolicy, source: "route" };
+    return { policy: this.getContextRefreshDefaults(), source: "global" };
+  }
+
+  setRouteContextRefreshPolicy(routeKey: string, policy: ContextRefreshPolicy): ContextRefreshEffectivePolicy {
+    const state = this.stateStore();
+    state.setRouteContextRefreshPolicy(routeKey, policy);
+    const routePolicy = state.getRouteContextRefreshPolicy(routeKey) ?? policy;
+    return { policy: routePolicy, source: "route" };
+  }
+
+  clearRouteContextRefreshPolicy(routeKey: string): ContextRefreshEffectivePolicy {
+    const state = this.stateStore();
+    state.clearRouteContextRefreshPolicy(routeKey);
+    return this.getRouteContextRefreshEffectivePolicy(routeKey);
+  }
+
   getCurrentProcessWorkdir(): string {
     return process.cwd();
   }
@@ -488,6 +530,9 @@ export class LauncherActions {
       "权限",
       `- 新 session 默认权限: ${formatRunPolicyForUser(this.startup.policy)}`,
       "",
+      "上下文刷新",
+      `- 独立模式默认: ${formatContextRefreshModeForUser(this.getContextRefreshDefaults().mode)}`,
+      "",
       "运行",
       `- 新 session 工作目录: ${this.startup.cwd}`,
     ];
@@ -499,6 +544,14 @@ export class LauncherActions {
 
   formatRunPolicy(policy: CodexRunPolicy | undefined): string {
     return formatRunPolicyForUser(policy);
+  }
+
+  formatContextRefreshPolicy(policy: ContextRefreshPolicy | undefined): string {
+    return formatContextRefreshModeForUser(contextRefreshPolicyOrDefault(policy).mode);
+  }
+
+  formatContextRefreshEffectivePolicy(effective: ContextRefreshEffectivePolicy): string {
+    return formatContextRefreshEffectivePolicyForUser(effective);
   }
 
   formatBindingLabel(binding: BindingSummary): string {

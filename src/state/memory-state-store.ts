@@ -2,7 +2,20 @@ import type { CodexSession, CodexSessionStatus } from "../codex/types.js";
 import type { CodexRunPolicy } from "../codex/codex-cli.js";
 import type { ChannelMessage } from "../protocol/channel.js";
 import { SessionBindings, type ActivateSessionResult, type ClaimSessionResult, type SessionBinding, type SessionOwner, type TransferSessionOwnerResult, type UnbindSessionResult } from "./session-bindings.js";
-import type { PendingBindingRecord, PendingSessionBinding, SessionPolicyRecord, TrustedRouteRecord } from "./persistent-state-types.js";
+import {
+  type PendingBindingRecord,
+  type PendingSessionBinding,
+  type SessionContextSnapshotObservedBy,
+  type SessionContextSnapshotRecord,
+  type SessionPolicyRecord,
+  type TrustedRouteRecord,
+} from "./persistent-state-types.js";
+import type { CodexSessionContextFingerprint } from "../codex/session-context-fingerprint.js";
+import {
+  cloneContextRefreshPolicy,
+  normalizeContextRefreshPolicy,
+  type ContextRefreshPolicy,
+} from "../context-refresh/types.js";
 
 export interface StoredSession {
   session: CodexSession;
@@ -23,12 +36,15 @@ export class MemoryStateStore {
   private readonly sessionRunPolicies = new Map<string, CodexRunPolicy>();
   private readonly pendingBindings = new Map<string, PendingBindingRecord>();
   private readonly trustedRoutes = new Map<string, TrustedRouteRecord>();
+  private readonly routeContextRefreshPolicies = new Map<string, ContextRefreshPolicy>();
+  private readonly sessionContextSnapshots = new Map<string, SessionContextSnapshotRecord>();
 
   constructor(
     readonly sessionBindings = new SessionBindings(),
     sessionPolicies: SessionPolicyRecord[] = [],
     pendingBindings: PendingBindingRecord[] = [],
     trustedRoutes: TrustedRouteRecord[] = [],
+    sessionContextSnapshots: SessionContextSnapshotRecord[] = [],
   ) {
     for (const policy of sessionPolicies) {
       this.sessionRunPolicies.set(policy.sessionId, { ...policy.runPolicy });
@@ -38,6 +54,9 @@ export class MemoryStateStore {
     }
     for (const route of trustedRoutes) {
       this.trustedRoutes.set(route.routeKey, cloneTrustedRoute(route));
+    }
+    for (const snapshot of sessionContextSnapshots) {
+      if (snapshot.sessionId) this.sessionContextSnapshots.set(snapshot.sessionId, cloneSessionContextSnapshot(snapshot));
     }
   }
 
@@ -185,6 +204,50 @@ export class MemoryStateStore {
       .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   }
 
+  getRouteContextRefreshPolicy(routeKey: string): ContextRefreshPolicy | undefined {
+    return cloneContextRefreshPolicy(this.routeContextRefreshPolicies.get(routeKey));
+  }
+
+  setRouteContextRefreshPolicy(routeKey: string, policy: ContextRefreshPolicy): void {
+    const normalized = normalizeContextRefreshPolicy(policy);
+    if (!normalized) throw new Error("invalid context refresh policy");
+    this.routeContextRefreshPolicies.set(routeKey, normalized);
+  }
+
+  clearRouteContextRefreshPolicy(routeKey: string): void {
+    this.routeContextRefreshPolicies.delete(routeKey);
+  }
+
+  getSessionContextSnapshot(sessionId: string): SessionContextSnapshotRecord | undefined {
+    const snapshot = this.sessionContextSnapshots.get(sessionId);
+    return snapshot ? cloneSessionContextSnapshot(snapshot) : undefined;
+  }
+
+  setSessionContextSnapshot(input: {
+    sessionId: string;
+    fingerprint: CodexSessionContextFingerprint;
+    observedBy: SessionContextSnapshotObservedBy;
+    observedAt?: string;
+  }): SessionContextSnapshotRecord {
+    const now = input.observedAt ?? new Date().toISOString();
+    const existing = this.sessionContextSnapshots.get(input.sessionId);
+    const record: SessionContextSnapshotRecord = {
+      sessionId: input.sessionId,
+      fingerprint: { ...input.fingerprint, sessionId: input.sessionId },
+      observedBy: input.observedBy,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.sessionContextSnapshots.set(input.sessionId, cloneSessionContextSnapshot(record));
+    return cloneSessionContextSnapshot(record);
+  }
+
+  listSessionContextSnapshots(): SessionContextSnapshotRecord[] {
+    return [...this.sessionContextSnapshots.values()]
+      .map(cloneSessionContextSnapshot)
+      .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  }
+
   setPendingBinding(input: {
     id: string;
     channelId: string;
@@ -278,6 +341,13 @@ function clonePendingBinding(record: PendingBindingRecord): PendingBindingRecord
 
 function cloneTrustedRoute(record: TrustedRouteRecord): TrustedRouteRecord {
   return { ...record };
+}
+
+function cloneSessionContextSnapshot(record: SessionContextSnapshotRecord): SessionContextSnapshotRecord {
+  return {
+    ...record,
+    fingerprint: { ...record.fingerprint },
+  };
 }
 
 function isSamePendingOwnerBinding(left: PendingSessionBinding, right: PendingSessionBinding): boolean {

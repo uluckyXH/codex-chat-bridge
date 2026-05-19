@@ -240,6 +240,20 @@ test("ChannelConfigStore persists display name and removes channel state directo
   assert.equal(store.listChannelInstances().length, 0);
 });
 
+test("ChannelConfigStore persists independent mode context refresh default", () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-channel-config-"));
+  const rootDir = path.join(baseDir, "state", "bridge");
+  const store = new ChannelConfigStore({ bridgeDir: rootDir });
+
+  assert.equal(store.getContextRefreshDefaults().mode, "off");
+  store.setContextRefreshDefaults({ mode: "detect" });
+
+  const reloaded = new ChannelConfigStore({ bridgeDir: rootDir });
+  assert.equal(reloaded.getContextRefreshDefaults().mode, "detect");
+  const config = readJson<BridgeConfigDocument>(path.join(rootDir, "config.json"));
+  assert.equal(config.codexDefaults?.independentMode?.contextRefresh?.mode, "detect");
+});
+
 test("FileStateStore removes channel routes and releases active and pending owners", () => {
   const rootDir = tempStateDir();
   const store = new FileStateStore({ rootDir });
@@ -302,6 +316,36 @@ test("FileStateStore removes channel routes and releases active and pending owne
   assert.equal(reloaded.getSessionOwner("session_feishu"), undefined);
   assert.equal(reloaded.listPendingBindings().map((pending) => pending.id).join(","), "weixin-primary-weixin-main-wx");
   assert.deepEqual(reloaded.listTrustedRoutes().map((route) => route.routeKey), [weixinRoute]);
+});
+
+test("FileStateStore persists route context refresh policy and session snapshots", () => {
+  const rootDir = tempStateDir();
+  const routeKey = "feishu-main:default:direct:oc_user";
+  const store = new FileStateStore({ rootDir });
+
+  store.recordRouteMessage(feishuMessage(routeKey));
+  store.setRouteContextRefreshPolicy(routeKey, { mode: "reload" });
+  store.setSessionContextSnapshot({
+    sessionId: "session_context",
+    observedBy: "bind",
+    fingerprint: {
+      sessionId: "session_context",
+      detectedAt: "2026-05-18T00:00:00.000Z",
+      source: "rollout",
+      rolloutPath: path.join(rootDir, "rollout.jsonl"),
+      rolloutMtimeMs: 1000,
+      rolloutSize: 12,
+    },
+    observedAt: "2026-05-18T00:00:01.000Z",
+  });
+
+  const reloaded = new FileStateStore({ rootDir });
+  assert.equal(reloaded.getRouteContextRefreshPolicy(routeKey)?.mode, "reload");
+  assert.equal(reloaded.getSessionContextSnapshot("session_context")?.observedBy, "bind");
+  assert.equal(reloaded.getSessionContextSnapshot("session_context")?.fingerprint.rolloutSize, 12);
+
+  reloaded.clearRouteContextRefreshPolicy(routeKey);
+  assert.equal(new FileStateStore({ rootDir }).getRouteContextRefreshPolicy(routeKey), undefined);
 });
 
 function tempStateDir(): string {

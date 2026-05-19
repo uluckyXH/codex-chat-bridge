@@ -14,7 +14,9 @@ function tempDir(): string {
 function fakeCodexBin(root: string): string {
   const fakeBin = path.join(root, "fake-codex-app-server.js");
   fs.writeFileSync(fakeBin, `#!/usr/bin/env node
+const fs = require("node:fs");
 const readline = require("node:readline");
+fs.appendFileSync(${JSON.stringify(path.join(root, "fake-app-server-starts.log"))}, process.pid + "\\n");
 const rl = readline.createInterface({ input: process.stdin });
 let threadId = "thread-app-server-1";
 let turnId = "turn-app-server-1";
@@ -335,6 +337,12 @@ rl.on("line", (line) => {
   return fakeBin;
 }
 
+function fakeAppServerStartCount(root: string): number {
+  const filePath = path.join(root, "fake-app-server-starts.log");
+  if (!fs.existsSync(filePath)) return 0;
+  return fs.readFileSync(filePath, "utf8").trim().split(/\r?\n/).filter(Boolean).length;
+}
+
 test("AppServerCodexAdapter routes command approvals through resolveApproval", async () => {
   const root = tempDir();
   const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
@@ -376,6 +384,27 @@ test("AppServerCodexAdapter sets thread names through app-server", async () => {
   await adapter.stop();
 
   assert.equal(sessions[0]?.title, "微信 / wx-main / 小黄");
+});
+
+test("AppServerCodexAdapter restarts app-server when reloading a session", async () => {
+  const root = tempDir();
+  const adapter = new AppServerCodexAdapter({ codexBin: fakeCodexBin(root) });
+  const session = await adapter.resumeSession("thread-app-server-1");
+  assert.equal(fakeAppServerStartCount(root), 1);
+
+  const reloaded = await adapter.reloadSession(session.id);
+  assert.equal(reloaded.session.id, session.id);
+  assert.equal(fakeAppServerStartCount(root), 2);
+
+  const events: CodexEvent[] = [];
+  for await (const event of adapter.run(session.id, "progress after reload")) {
+    events.push(event);
+  }
+  await adapter.stop();
+
+  assert.ok(events.some((event) => event.type === "turn.started"));
+  assert.ok(events.some((event) => event.type === "assistant.completed" && event.text === "progress done"));
+  assert.ok(events.some((event) => event.type === "turn.completed"));
 });
 
 test("AppServerCodexAdapter fills empty Codex state previews", async (t) => {

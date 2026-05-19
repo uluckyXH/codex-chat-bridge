@@ -13,6 +13,8 @@ import type { ChannelRegistry } from "../channels/registry.js";
 import type { ChannelMessage } from "../protocol/channel.js";
 import type { ChannelDeliveryPolicy } from "../protocol/delivery-policy.js";
 import type { MemoryStateStore } from "../state/memory-state-store.js";
+import type { ContextRefreshEffectivePolicy } from "../context-refresh/types.js";
+import { formatContextRefreshEffectivePolicyForUser } from "../context-refresh/types.js";
 import { formatElapsedDurationSince } from "../time/display-time.js";
 import type { CompactState, InitialRouteBinding, ProgressDeliveryMode, SessionListScope, SessionListState } from "./bridge-types.js";
 import {
@@ -60,6 +62,7 @@ export interface BridgeStatusTextOptions {
   compactStateForRoute(routeKey: string): CompactState;
   collaborationModeForRoute(routeKey: string, sessionId?: string): CodexCollaborationMode;
   progressModeFor(routeKey: string): ProgressDeliveryMode;
+  contextRefreshFor(routeKey: string): ContextRefreshEffectivePolicy;
   runPolicyStatus(sessionId?: string): CodexRunPolicyStatus | undefined;
 }
 
@@ -78,6 +81,7 @@ export class BridgeStatusText {
   private readonly compactStateForRoute: BridgeStatusTextOptions["compactStateForRoute"];
   private readonly collaborationModeForRoute: BridgeStatusTextOptions["collaborationModeForRoute"];
   private readonly progressModeFor: BridgeStatusTextOptions["progressModeFor"];
+  private readonly contextRefreshFor: BridgeStatusTextOptions["contextRefreshFor"];
   private readonly runPolicyStatus: BridgeStatusTextOptions["runPolicyStatus"];
   private readonly sessionListStates = new Map<string, SessionListState>();
 
@@ -96,6 +100,7 @@ export class BridgeStatusText {
     this.compactStateForRoute = options.compactStateForRoute;
     this.collaborationModeForRoute = options.collaborationModeForRoute;
     this.progressModeFor = options.progressModeFor;
+    this.contextRefreshFor = options.contextRefreshFor;
     this.runPolicyStatus = options.runPolicyStatus;
   }
 
@@ -141,6 +146,7 @@ export class BridgeStatusText {
       `- 待处理图片: \`${this.pendingMediaCount(routeKey)}\``,
       ...formatCompactStatusLines(compactState),
       `- 协作模式: ${formatCollaborationModeForStatus(this.collaborationModeForRoute(routeKey, binding?.sessionId))}`,
+      `- 上下文刷新: ${formatContextRefreshEffectivePolicyForUser(this.contextRefreshFor(routeKey))}`,
       ...formatGoalStatusLines(goal),
       `- 待审批: \`${approvals.length}\``,
       ...formatPendingApprovalStatus(approvals.at(-1)),
@@ -233,6 +239,17 @@ export class BridgeStatusText {
       { command: "/help", description: "查看命令。" },
       { command: "/new", description: "创建新 Codex 会话。" },
       { command: "/status", description: "查看状态、运行耗时、队列、审批和上下文 token 用量。" },
+      {
+        command: "/context-refresh [off|detect|reload|inherit]",
+        description: "设置当前聊天发送前是否检测本机 Codex session 上下文更新。",
+        details: [
+          "`/context-refresh`: 查看当前聊天设置。",
+          "`/context-refresh off`: 关闭发送前检测。",
+          "`/context-refresh detect`: 发现本机 session 外部更新时只提醒，本条消息继续发送。",
+          "`/context-refresh reload`: 发现本机 session 外部更新时先重新加载当前 session，再发送。",
+          "`/context-refresh inherit`: 清除当前聊天覆盖，跟随全局默认。",
+        ],
+      },
       { command: "/sessions", description: "列出当前聊天上下文拥有、绑定过或本地记录相关的 Codex 会话。" },
       { command: "/sessions all", description: "列出本机全部可发现的 Codex 历史会话。" },
       { command: "/resume [session|编号]", description: "恢复并绑定已有会话；不带参数时进入编号选择。" },
@@ -295,6 +312,20 @@ export class BridgeStatusText {
       "- `detailed`: 发送所有可见进度，包括命令和工具调用细节。",
       "- `silent`: 不发送进度文本，只发送开始、审批和最终回复。",
       "- 文件不会由进度模式自动发送；需要本轮允许发文件时使用 `/sendfile <任务内容>`。",
+    ].join("\n");
+  }
+
+  contextRefreshText(routeKey: string): string {
+    const effective = this.contextRefreshFor(routeKey);
+    return [
+      "**上下文刷新**",
+      `- 当前模式: ${formatContextRefreshEffectivePolicyForUser(effective)}`,
+      "- `off`: 发送前不检测本机 Codex 历史是否被外部更新。",
+      "- `detect`: 发送前检测，发现更新时只提醒，不重载。",
+      "- `reload`: 发送前检测，发现更新时先重新加载当前 session，再发送。",
+      "- `inherit`: 当前聊天跟随全局默认。",
+      "",
+      "用法: `/context-refresh reload`、`/context-refresh detect`、`/context-refresh off`、`/context-refresh inherit`。",
     ].join("\n");
   }
 

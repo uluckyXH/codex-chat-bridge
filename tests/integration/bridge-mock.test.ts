@@ -617,6 +617,12 @@ test("Bridge handles compact confirmation and success over mock channel", async 
   const completed = channel.sentMessages.find((message) => message.text.includes("上下文压缩完成"))?.text ?? "";
   assert.equal(help.includes("```text"), false);
   assert.equal(help.includes("/new chat"), false);
+  assert.ok(help.includes("- `/context-refresh [off|detect|reload|inherit]`: 设置当前聊天发送前是否检测本机 Codex session 上下文更新。"));
+  assert.ok(help.includes("  - `/context-refresh`: 查看当前聊天设置。"));
+  assert.ok(help.includes("  - `/context-refresh off`: 关闭发送前检测。"));
+  assert.ok(help.includes("  - `/context-refresh detect`: 发现本机 session 外部更新时只提醒，本条消息继续发送。"));
+  assert.ok(help.includes("  - `/context-refresh reload`: 发现本机 session 外部更新时先重新加载当前 session，再发送。"));
+  assert.ok(help.includes("  - `/context-refresh inherit`: 清除当前聊天覆盖，跟随全局默认。"));
   assert.ok(help.includes("- `/compact`: 压缩当前 Codex session 的历史上下文。"));
   assert.ok(help.includes("  - `/compact confirm`: 确认并开始压缩。"));
   assert.ok(confirmation.includes("压缩前上下文: `164,171 / 258,400 token`"));
@@ -1843,6 +1849,8 @@ test("Bridge hides progress command and shows /fff in weixin help", async () => 
 
   const help = channel.sentMessages[0].text;
   assert.equal(help.includes("`/progress [brief|detailed|silent]`"), false);
+  assert.ok(help.includes("- `/context-refresh [off|detect|reload|inherit]`:"));
+  assert.ok(help.includes("  - `/context-refresh reload`: 发现本机 session 外部更新时先重新加载当前 session，再发送。"));
   assert.ok(help.includes("- `/fff`:"));
 });
 

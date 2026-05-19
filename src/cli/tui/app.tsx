@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, useApp, useInput } from "ink";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
+import type { ContextRefreshMode, ContextRefreshPolicy } from "../../context-refresh/types.js";
 import type { FeishuCredentials } from "../../channels/feishu/feishu-types.js";
 import { writeClipboardText as writeClipboardTextDefault } from "../../runtime/clipboard.js";
 import { chatCodexTitle } from "../../runtime/package-info.js";
@@ -9,6 +10,7 @@ import { formatManagedChannelLabel } from "../actions/channel-actions.js";
 import {
   feishuCredentialDefaults,
   type FeishuBotSetupResult,
+  type LauncherActions,
   type LauncherDashboard,
   type PairingRouteSummary,
 } from "../actions/launcher-actions.js";
@@ -22,6 +24,7 @@ import {
   BindingsView,
   ChannelDetailView,
   ChannelRenameView,
+  ContextRefreshView,
   ChannelsView,
   HelpView,
   HomeView,
@@ -37,6 +40,7 @@ import {
   WorkdirInputView,
   WorkdirView,
 } from "./views.js";
+import type { ContextRefreshTarget } from "./types.js";
 
 export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboardTextDefault }: ChatCodexTuiProps): React.JSX.Element {
   const { exit } = useApp();
@@ -76,7 +80,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       const channel = channels.find((item) => item.record.id === screen.channelId)?.record;
       setSelected(channel ? actions.listWeixinPrimaryChoices(channel)?.selectable.length ?? 0 : 0);
     } else {
-      setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 6 : 0);
+      setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 7 : 0);
     }
     setConfirm(undefined);
     setManualValue("");
@@ -233,6 +237,10 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       setScreen({ name: "workdir" });
       return;
     }
+    if (screen.name === "contextRefresh" && screen.target.kind === "route") {
+      setScreen({ name: "bindingDetail", routeKey: screen.target.routeKey });
+      return;
+    }
     if (screen.name === "permission" && screen.target.kind === "session") {
       setScreen({ name: "bindingDetail", routeKey: screen.target.routeKey });
       return;
@@ -285,6 +293,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
     else if (screen.name === "pairingDetail" && currentPairing) void handlePairingDetailInput(input, key.return, currentPairing);
     else if (screen.name === "sessionSelect") void handleSessionSelectInput(input, key.return);
     else if (screen.name === "permission") void handlePermissionInput(input, key.return, screen.target);
+    else if (screen.name === "contextRefresh") void handleContextRefreshInput(input, key.return, screen.target);
     else if (screen.name === "workdir") void handleWorkdirInput(input, key.return);
     else if ((screen.name === "status" || screen.name === "help") && key.return) goHome();
     else if (screen.name === "startConfirm" && key.return) start();
@@ -292,14 +301,14 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
 
   const handleHomeInput = (input: string, enter: boolean): void => {
     const noChannels = channels.length === 0;
-    const picked = numericPick(input, noChannels ? 4 : 7);
+    const picked = numericPick(input, noChannels ? 5 : 8);
     const actionIndex = picked ?? selected;
     const actionRequested = enter || picked !== undefined;
     if (input === "0") {
       quit();
       return;
     }
-    if (noChannels && actionIndex === 4 && enter) {
+    if (noChannels && actionIndex === 5 && enter) {
       quit();
       return;
     }
@@ -319,7 +328,11 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       setScreen({ name: "permission", target: { kind: "default" } });
       return;
     }
-    if (input === "d" || (noChannels ? actionIndex === 3 : actionIndex === 4) && actionRequested) {
+    if (input === "x" || (noChannels ? actionIndex === 3 : actionIndex === 4) && actionRequested) {
+      setScreen({ name: "contextRefresh", target: { kind: "default" } });
+      return;
+    }
+    if (input === "d" || (noChannels ? actionIndex === 4 : actionIndex === 5) && actionRequested) {
       setScreen({ name: "workdir" });
       return;
     }
@@ -331,11 +344,11 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       setScreen({ name: "bindings" });
       return;
     }
-    if (input === "s" || (!noChannels && actionIndex === 5 && actionRequested)) {
+    if (input === "s" || (!noChannels && actionIndex === 6 && actionRequested)) {
       setScreen({ name: "status" });
       return;
     }
-    if (enter || (!noChannels && actionIndex === 6 && picked !== undefined)) openNeedsAttention();
+    if (enter || (!noChannels && actionIndex === 7 && picked !== undefined)) openNeedsAttention();
   };
 
   const handleChannelsInput = async (input: string, enter: boolean): Promise<void> => {
@@ -608,7 +621,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       else setScreen({ name: "bindings" });
       return;
     }
-    const picked = numericPick(input, 4);
+    const picked = numericPick(input, 5);
     if (!enter && picked === undefined) return;
     const actionIndex = picked ?? selected;
     if ((input === "1" || actionIndex === 0) && (enter || input === "1")) {
@@ -623,7 +636,11 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       setScreen({ name: "permission", target: { kind: "session", routeKey: binding.route.routeKey, session: binding.activeSession } });
       return;
     }
-    if ((input === "4" || actionIndex === 3) && binding.activeSession) confirmUnbind(binding);
+    if (input === "4" || actionIndex === 3) {
+      setScreen({ name: "contextRefresh", target: { kind: "route", routeKey: binding.route.routeKey } });
+      return;
+    }
+    if ((input === "5" || actionIndex === 4) && binding.activeSession) confirmUnbind(binding);
   };
 
   const handleSessionSelectInput = async (input: string, enter: boolean): Promise<void> => {
@@ -667,6 +684,29 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       return;
     }
     await savePermission(target, policy);
+  };
+
+  const handleContextRefreshInput = async (input: string, enter: boolean, target: ContextRefreshTarget): Promise<void> => {
+    const pick = numericPick(input, target.kind === "route" ? 4 : 3);
+    const index = pick ?? selected;
+    if (!enter && pick === undefined) return;
+    if (target.kind === "route" && index === 0) {
+      const effective = actions.clearRouteContextRefreshPolicy(target.routeKey);
+      setFlash({ kind: "success", message: `已设置当前聊天上下文刷新：${actions.formatContextRefreshEffectivePolicy(effective)}` });
+      await refresh();
+      return;
+    }
+    const mode = contextRefreshModeForIndex(target.kind, index);
+    if (!mode) return;
+    const policy: ContextRefreshPolicy = { mode };
+    if (target.kind === "default") {
+      actions.setContextRefreshDefaults(policy);
+      setFlash({ kind: "success", message: `已设置独立模式默认上下文刷新：${actions.formatContextRefreshPolicy(policy)}` });
+    } else {
+      const effective = actions.setRouteContextRefreshPolicy(target.routeKey, policy);
+      setFlash({ kind: "success", message: `已设置当前聊天上下文刷新：${actions.formatContextRefreshEffectivePolicy(effective)}` });
+    }
+    await refresh();
   };
 
   const handleWorkdirInput = async (input: string, enter: boolean): Promise<void> => {
@@ -858,6 +898,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       setScreen(screen.target.kind === "route" ? { name: "bindingDetail", routeKey: screen.target.routeKey } : { name: "weixinBinding", channelId: screen.target.channelId });
     }} />;
     if (screen.name === "permission") return <PermissionView target={screen.target} startupPolicy={actions.getStartup().policy} sessionPolicy={screen.target.kind === "session" ? actions.getSessionPermission(screen.target.session.id) : undefined} selected={selected} />;
+    if (screen.name === "contextRefresh") return <ContextRefreshView target={screen.target} current={formatCurrentContextRefresh(actions, screen.target)} selected={selected} />;
     if (screen.name === "workdir") return <WorkdirView cwd={actions.getStartup().cwd} processCwd={actions.getCurrentProcessWorkdir()} selected={selected} />;
     if (screen.name === "workdirInput") return <WorkdirInputView value={manualValue} onChange={setManualValue} onSubmit={async (value) => {
       await saveWorkdir(value.trim());
@@ -891,11 +932,12 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
 function maxSelectableIndex(screen: Screen, channels: LauncherDashboard["channels"], bindingItemCount: number): number {
   if (screen.name === "channels") return channels.length > 0 ? channels.length + 6 : 1;
   if (screen.name === "bindings") return Math.max(0, bindingItemCount - 1);
-  if (screen.name === "home") return channels.length === 0 ? 4 : 6;
+  if (screen.name === "home") return channels.length === 0 ? 5 : 7;
   if (screen.name === "channelDetail") return 4;
-  if (screen.name === "bindingDetail") return 3;
+  if (screen.name === "bindingDetail") return 4;
   if (screen.name === "pairingDetail") return 2;
   if (screen.name === "permission") return 1;
+  if (screen.name === "contextRefresh") return screen.target.kind === "route" ? 3 : 2;
   if (screen.name === "workdir") return 1;
   return 30;
 }
@@ -905,6 +947,26 @@ function numericPick(input: string, length: number): number | undefined {
   const value = Number.parseInt(input, 10);
   if (value < 1 || value > length) return undefined;
   return value - 1;
+}
+
+function contextRefreshModeForIndex(kind: ContextRefreshTarget["kind"], index: number): ContextRefreshMode | undefined {
+  if (kind === "route") {
+    if (index === 1) return "off";
+    if (index === 2) return "detect";
+    if (index === 3) return "reload";
+    return undefined;
+  }
+  if (index === 0) return "off";
+  if (index === 1) return "detect";
+  if (index === 2) return "reload";
+  return undefined;
+}
+
+function formatCurrentContextRefresh(actions: LauncherActions, target: ContextRefreshTarget): string {
+  if (target.kind === "default") {
+    return actions.formatContextRefreshPolicy(actions.getContextRefreshDefaults());
+  }
+  return actions.formatContextRefreshEffectivePolicy(actions.getRouteContextRefreshEffectivePolicy(target.routeKey));
 }
 
 function nextFeishuStep(step: Extract<Screen, { name: "addFeishu" }>["step"]): Extract<Screen, { name: "addFeishu" }>["step"] | undefined {

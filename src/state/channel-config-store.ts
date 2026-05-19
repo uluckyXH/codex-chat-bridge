@@ -9,6 +9,13 @@ import {
   type ChannelInstanceRecord,
 } from "./persistent-state-types.js";
 import { defaultBridgeStateDir, readJsonFile, writeJsonFileAtomic } from "./state-files.js";
+import {
+  DEFAULT_CONTEXT_REFRESH_POLICY,
+  cloneContextRefreshPolicy,
+  contextRefreshPolicyOrDefault,
+  normalizeContextRefreshPolicy,
+  type ContextRefreshPolicy,
+} from "../context-refresh/types.js";
 
 export interface UpsertChannelInstanceInput {
   id: string;
@@ -80,8 +87,28 @@ export class ChannelConfigStore {
       schemaVersion: config.schemaVersion ?? LOCAL_STATE_SCHEMA_VERSION,
       updatedAt: config.updatedAt ?? new Date(0).toISOString(),
       channels: Array.isArray(config.channels) ? config.channels : [],
-      codexDefaults: config.codexDefaults,
+      codexDefaults: normalizeCodexDefaults(config.codexDefaults),
     };
+  }
+
+  getContextRefreshDefaults(): ContextRefreshPolicy {
+    return contextRefreshPolicyOrDefault(this.readConfig().codexDefaults?.independentMode?.contextRefresh);
+  }
+
+  setContextRefreshDefaults(policy: ContextRefreshPolicy): ContextRefreshPolicy {
+    const normalized = normalizeContextRefreshPolicy(policy);
+    if (!normalized) throw new Error("invalid context refresh policy");
+    const config = this.readConfig();
+    config.codexDefaults = {
+      ...config.codexDefaults,
+      independentMode: {
+        ...config.codexDefaults?.independentMode,
+        contextRefresh: normalized,
+      },
+    };
+    config.updatedAt = new Date().toISOString();
+    writeJsonFileAtomic(this.configPath, config);
+    return cloneContextRefreshPolicy(normalized) ?? { ...DEFAULT_CONTEXT_REFRESH_POLICY };
   }
 
   listChannelInstances(): ChannelInstanceRecord[] {
@@ -203,6 +230,20 @@ export class ChannelConfigStore {
     return path.join(this.resolveStateDir(record.stateDir), "accounts", accountId);
   }
 
+}
+
+function normalizeCodexDefaults(value: BridgeConfigDocument["codexDefaults"]): BridgeConfigDocument["codexDefaults"] {
+  if (!value || typeof value !== "object") return value;
+  const contextRefresh = normalizeContextRefreshPolicy(value.independentMode?.contextRefresh);
+  return {
+    ...value,
+    independentMode: contextRefresh
+      ? {
+          ...value.independentMode,
+          contextRefresh,
+        }
+      : value.independentMode,
+  };
 }
 
 function normalizeDisplayName(value: string | undefined): string | undefined {

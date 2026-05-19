@@ -25,6 +25,7 @@ import type { TurnScheduler } from "./turn-scheduler.js";
 import { UnlimitedTurnScheduler } from "./turn-scheduler.js";
 import { BridgeBackgroundTurns } from "./background-turns.js";
 import { BridgeCommandRouter } from "./command-router.js";
+import { SessionContextRefreshManager } from "./context-refresh.js";
 import { BridgeDelivery } from "./delivery.js";
 import { BridgeProgressDelivery } from "./progress-delivery.js";
 import { BridgeRouteQueue } from "./route-queue.js";
@@ -36,6 +37,7 @@ import { handleApprovalCommand } from "./commands/approval-command.js";
 import { handleCancelCommand } from "./commands/cancel-command.js";
 import { handleCollaborationModeCommand } from "./commands/collaboration-command.js";
 import { handleCompactCommand } from "./commands/compact-command.js";
+import { handleContextRefreshCommand } from "./commands/context-refresh-command.js";
 import { handleGoalCommand } from "./commands/goal-command.js";
 import { handleModelCommand } from "./commands/model-command.js";
 import { handleNewSessionCommand } from "./commands/new-command.js";
@@ -75,6 +77,7 @@ export class Bridge {
   private readonly delivery: BridgeDelivery;
   private readonly progressDelivery: BridgeProgressDelivery;
   private readonly routeTrustGate: RouteTrustGate;
+  private readonly contextRefresh: SessionContextRefreshManager;
   private readonly backgroundTurns: BridgeBackgroundTurns;
   private readonly routeQueue: BridgeRouteQueue;
   private readonly routeSteering: BridgeRouteSteering;
@@ -121,6 +124,13 @@ export class Bridge {
       mode: options.routeTrustMode,
       pairingCodes: options.pairingCodeManager,
     });
+    this.contextRefresh = new SessionContextRefreshManager({
+      state: this.state,
+      codex: this.codex,
+      logger: this.logger,
+      defaultPolicy: options.contextRefresh?.defaultPolicy,
+      readFingerprint: options.contextRefresh?.readFingerprint,
+    });
     this.progressDelivery = new BridgeProgressDelivery({
       delivery: this.delivery,
       transcript: this.transcript,
@@ -140,6 +150,7 @@ export class Bridge {
       hasRouteCollaborationMode: (routeKey) => this.routeCollaborationModes.has(routeKey),
       applyRouteCollaborationModeToSession: (routeKey, sessionId) => this.applyRouteCollaborationModeToSession(routeKey, sessionId),
       syncRouteCollaborationModeFromSession: (routeKey, sessionId) => this.syncRouteCollaborationModeFromSession(routeKey, sessionId),
+      recordSessionContextSnapshot: (sessionId, observedBy) => this.contextRefresh.recordSnapshot(sessionId, observedBy),
     });
     this.routeQueue = new BridgeRouteQueue({
       codex: this.codex,
@@ -154,6 +165,7 @@ export class Bridge {
       deliveryPolicyFor: (message) => this.deliveryPolicyFor(message),
       shouldDeliverProgressWithPolicy: (policy, routeKey, kind) => this.shouldDeliverProgressWithPolicy(policy, routeKey, kind),
       progressDelivery: this.progressDelivery,
+      contextRefresh: this.contextRefresh,
     });
     this.backgroundTurns = new BridgeBackgroundTurns({
       state: this.state,
@@ -196,6 +208,7 @@ export class Bridge {
       compactStateForRoute: (routeKey) => this.compactStateForRoute(routeKey),
       collaborationModeForRoute: (routeKey, sessionId) => this.collaborationModeForRoute(routeKey, sessionId),
       progressModeFor: (routeKey) => this.progressModeFor(routeKey),
+      contextRefreshFor: (routeKey) => this.contextRefresh.effectivePolicy(routeKey),
       runPolicyStatus: (sessionId) => this.runPolicyStatus(sessionId),
     });
     this.commandRouter = new BridgeCommandRouter({
@@ -237,6 +250,11 @@ export class Bridge {
           delivery: this.delivery,
           statusText: this.statusTextRenderer,
           setProgressMode: (routeKey, mode) => this.routeProgressModes.set(routeKey, mode),
+        }, message, target, rawMode),
+        contextRefresh: (message, target, rawMode) => handleContextRefreshCommand({
+          state: this.state,
+          delivery: this.delivery,
+          statusText: this.statusTextRenderer,
         }, message, target, rawMode),
         sendFile: (message, target, rawText) => handleSendFileCommand({
           delivery: this.delivery,

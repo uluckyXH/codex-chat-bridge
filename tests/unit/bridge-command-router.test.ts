@@ -67,6 +67,23 @@ test("BridgeCommandRouter lets non-mutating progress commands dispatch", async (
   assert.equal(fixture.calls.progressMode, 1);
 });
 
+test("BridgeCommandRouter routes context refresh command and treats changes as busy mutations", async () => {
+  const fixture = routerFixture();
+  await fixture.router.handle(message(), target(), "context-refresh", ["reload"], "/context-refresh reload");
+  assert.equal(fixture.calls.contextRefresh, 1);
+
+  const busy = routerFixture({ busy: true });
+  await busy.router.handle(message(), target(), "context-refresh", ["reload"], "/context-refresh reload");
+  assert.equal(busy.calls.contextRefresh, 0);
+  assert.match(busy.sent.at(-1) ?? "", /上下文刷新/);
+});
+
+test("BridgeCommandRouter lets context refresh status dispatch while busy", async () => {
+  const fixture = routerFixture({ busy: true });
+  await fixture.router.handle(message(), target(), "context-refresh", [], "/context-refresh");
+  assert.equal(fixture.calls.contextRefresh, 1);
+});
+
 test("BridgeCommandRouter honors disabled progress command policy", async () => {
   const fixture = routerFixture({
     deliveryPolicyFor: () => normalizeChannelDeliveryPolicy({
@@ -90,6 +107,7 @@ function routerFixture(options: {
     createNewSession: 0,
     model: 0,
     progressMode: 0,
+    contextRefresh: 0,
     compact: 0,
   };
   let newSessionCall: { args: string[]; rawText: string } | undefined;
@@ -120,6 +138,9 @@ function routerFixture(options: {
     goal: async () => undefined,
     progressMode: async () => {
       calls.progressMode += 1;
+    },
+    contextRefresh: async () => {
+      calls.contextRefresh += 1;
     },
     sendFile: async () => undefined,
     model: async () => {

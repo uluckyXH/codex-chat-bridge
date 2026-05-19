@@ -22,6 +22,11 @@ export class AppServerSessionStore {
     this.threadToSession.set(threadId, sessionId);
   }
 
+  clear(): void {
+    this.records.clear();
+    this.threadToSession.clear();
+  }
+
   resolveThreadSession(threadId: string): string {
     return this.threadToSession.get(threadId) ?? threadId;
   }

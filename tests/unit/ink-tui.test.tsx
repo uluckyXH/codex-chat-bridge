@@ -9,6 +9,7 @@ import { ChatCodexTui } from "../../src/cli/tui/app.js";
 import { RuntimeLogStore, RuntimeLogView, RuntimeTuiTranscriptSink } from "../../src/cli/tui/runtime-log.js";
 import { runRuntimeLogTui } from "../../src/cli/tui/run-runtime-log.js";
 import type { LauncherActions, LauncherDashboard } from "../../src/cli/actions/launcher-actions.js";
+import type { ContextRefreshEffectivePolicy, ContextRefreshPolicy } from "../../src/context-refresh/types.js";
 
 const ANSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
 const WEIXIN_LOGIN_LINK = "https://login.example/qr?token=abcdefghijklmnopqrstuvwxyz0123456789-full-link-tail";
@@ -196,7 +197,8 @@ test("Ink TUI first run guides user to add channels with Enter and number shortc
   assert.match(cleanFrame(view), /首次配置/);
   assert.match(cleanFrame(view), /1\. 添加微信账号/);
   assert.match(cleanFrame(view), /2\. 添加飞书机器人/);
-  assert.match(cleanFrame(view), /4\. 工作目录/);
+  assert.match(cleanFrame(view), /4\. 上下文刷新/);
+  assert.match(cleanFrame(view), /5\. 工作目录/);
   assert.match(cleanFrame(view), /↑↓ 选择/);
   assert.match(cleanFrame(view), /0\/q 退出/);
 
@@ -250,6 +252,7 @@ test("Ink TUI first run exit action is selectable", async () => {
   const view = render(<ChatCodexTui actions={mockActions(emptyDashboardFixture())} onDone={(next) => { result = next; }} />);
   await waitForInk();
 
+  view.stdin.write("\u001B[B");
   view.stdin.write("\u001B[B");
   view.stdin.write("\u001B[B");
   view.stdin.write("\u001B[B");
@@ -688,6 +691,17 @@ function mockActions(
       "运行",
       "- 新 session 工作目录: /repo",
     ],
+    getContextRefreshDefaults: () => dashboard.contextRefreshDefault,
+    setContextRefreshDefaults: (policy: ContextRefreshPolicy) => {
+      dashboard.contextRefreshDefault = policy;
+      return policy;
+    },
+    getRouteContextRefreshPolicy: () => undefined,
+    getRouteContextRefreshEffectivePolicy: () => ({ policy: dashboard.contextRefreshDefault, source: "global" }),
+    setRouteContextRefreshPolicy: (_routeKey: string, policy: ContextRefreshPolicy) => ({ policy, source: "route" }),
+    clearRouteContextRefreshPolicy: () => ({ policy: dashboard.contextRefreshDefault, source: "global" }),
+    formatContextRefreshPolicy: (policy: ContextRefreshPolicy | undefined) => policy?.mode === "reload" ? "检测并刷新" : policy?.mode === "detect" ? "检测提醒" : "关闭",
+    formatContextRefreshEffectivePolicy: (effective: ContextRefreshEffectivePolicy) => `${effective.policy.mode}`,
   } as unknown as LauncherActions;
 }
 
@@ -771,6 +785,7 @@ function dashboardFixture(): LauncherDashboard {
       pending: 0,
       unboundPolicy: "auto_new",
     },
+    contextRefreshDefault: { mode: "off" },
     startup: {
       adapterMode: "app-server",
       cwd: "/repo",

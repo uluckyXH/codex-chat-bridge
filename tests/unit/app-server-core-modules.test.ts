@@ -30,6 +30,9 @@ test("app-server session store keeps local sessions and thread mappings", () => 
     status: { type: "idle" },
     updatedAt: "later",
   }]);
+  store.clear();
+  assert.equal(store.resolveThreadSession("thread-1"), "thread-1");
+  assert.deepEqual(store.listSessions("route-1", undefined), []);
 });
 
 test("app-server turn controller maps notifications to queued events and status updates", async () => {
@@ -42,7 +45,9 @@ test("app-server turn controller maps notifications to queued events and status 
   const threadToSession = new Map([["thread-1", "session-1"]]);
   const controller = new AppServerTurnController({ sessions, threadToSession });
   const queue = new AsyncEventQueue<CodexEvent>();
+  assert.equal(controller.hasActiveTurns(), false);
   controller.registerTurn("session-1", "turn-1", queue);
+  assert.equal(controller.hasActiveTurns(), true);
   const iterator = queue[Symbol.asyncIterator]();
 
   controller.handleNotification({
@@ -81,6 +86,7 @@ test("app-server turn controller maps notifications to queued events and status 
   });
   assert.deepEqual(await iterator.next(), { value: undefined, done: true });
   assert.equal(sessions.get("session-1")?.status.type, "idle");
+  assert.equal(controller.hasActiveTurns(), false);
 });
 
 test("app-server rpc client starts stdio server, dispatches responses, notifications, and stop", async () => {
@@ -115,6 +121,9 @@ for await (const line of rl) {
     assert.deepEqual(await client.request("model/list"), { data: [{ id: "fake" }], nextCursor: null });
     assert.deepEqual(await client.request("emit"), { emitted: true });
     assert.deepEqual(notifications, [{ method: "turn/started", params: { threadId: "thread-1", turnId: "turn-1" } }]);
+    client.stop();
+    await client.start();
+    assert.deepEqual(await client.request("model/list"), { data: [{ id: "fake" }], nextCursor: null });
   } finally {
     client.stop();
     await rm(dir, { recursive: true, force: true });

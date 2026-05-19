@@ -142,6 +142,11 @@ export interface CodexSessionSummary {
   updatedAt: string;
 }
 
+export interface CodexSessionReloadResult {
+  session: CodexSession;
+  reloadedAt: string;
+}
+
 export interface CodexCompactResult {
   sessionId: string;
   message?: string;
@@ -156,6 +161,7 @@ export interface CodexAdapter {
   setSessionTitle?(sessionId: string, title: string): Promise<void>;
   setSessionPreview?(sessionId: string, preview: string): Promise<void>;
   resumeSession(sessionId: string): Promise<CodexSession>;
+  reloadSession?(sessionId: string): Promise<CodexSessionReloadResult>;
   run(sessionId: string, prompt: CodexPromptInput, options?: CodexRunOptions): AsyncIterable<CodexEvent>;
   steer?(sessionId: string, prompt: CodexPromptInput): Promise<void>;
   cancel?(sessionId: string): Promise<void>;

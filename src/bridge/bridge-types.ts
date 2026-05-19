@@ -8,6 +8,8 @@ import type { MemoryStateStore } from "../state/memory-state-store.js";
 import type { SessionBindings } from "../state/session-bindings.js";
 import type { TurnScheduler } from "./turn-scheduler.js";
 import type { PairingCodeManager } from "./pairing-code-manager.js";
+import type { ContextRefreshPolicy } from "../context-refresh/types.js";
+import type { CodexSessionContextFingerprint } from "../codex/session-context-fingerprint.js";
 
 export interface BridgeOptions {
   channel?: ChannelAdapter;
@@ -30,6 +32,12 @@ export interface BridgeOptions {
   steerBatchMaxChars?: number;
   routeTrustMode?: RouteTrustMode;
   pairingCodeManager?: PairingCodeManager;
+  contextRefresh?: BridgeContextRefreshOptions;
+}
+
+export interface BridgeContextRefreshOptions {
+  defaultPolicy?: ContextRefreshPolicy;
+  readFingerprint?(sessionId: string): CodexSessionContextFingerprint | undefined | Promise<CodexSessionContextFingerprint | undefined>;
 }
 
 export interface QueuedPrompt {
@@ -125,6 +133,7 @@ export const STEER_BATCH_MAX_MESSAGES = 5;
 export const STEER_BATCH_MAX_CHARS = 4000;
 export const ROUTE_BUSY_MUTATION_REJECT_TEXT = [
   "当前对话的 Codex 正在执行，不能修改会话、权限、模型、协作模式或 Goal。",
+  "上下文刷新设置也会在当前任务结束前被拦截。",
   "请等待完成，或发送 /stop 后再修改。",
 ].join("\n");
 export const COMPACT_RUNNING_REJECT_TEXT = "当前正在压缩上下文，请等待完成后再操作。";

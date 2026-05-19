@@ -29,6 +29,7 @@ export type Screen =
   | { name: "sessionSelect"; target: SessionTarget }
   | { name: "manualSession"; target: SessionTarget }
   | { name: "permission"; target: PermissionTarget }
+  | { name: "contextRefresh"; target: ContextRefreshTarget }
   | { name: "workdir" }
   | { name: "workdirInput" }
   | { name: "status" }
@@ -44,6 +45,10 @@ export type SessionTarget =
 export type PermissionTarget =
   | { kind: "default" }
   | { kind: "session"; routeKey: string; session: SessionDisplay };
+
+export type ContextRefreshTarget =
+  | { kind: "default" }
+  | { kind: "route"; routeKey: string };
 
 export type Flash = { kind: "info" | "success" | "error"; message: string };
 

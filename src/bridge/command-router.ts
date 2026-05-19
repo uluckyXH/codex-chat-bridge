@@ -26,6 +26,7 @@ export interface BridgeCommandHandlers {
   ): Promise<void>;
   goal(message: ChannelMessage, target: ChannelTarget, rawText: string): Promise<void>;
   progressMode(message: ChannelMessage, target: ChannelTarget, rawMode: string | undefined): Promise<void>;
+  contextRefresh(message: ChannelMessage, target: ChannelTarget, rawMode: string | undefined): Promise<void>;
   sendFile(message: ChannelMessage, target: ChannelTarget, rawText: string): Promise<void>;
   model(message: ChannelMessage, target: ChannelTarget, args: string[]): Promise<void>;
   permission(message: ChannelMessage, target: ChannelTarget, args: string[]): Promise<void>;
@@ -128,6 +129,12 @@ export class BridgeCommandRouter {
           return;
         }
         await this.handlers.progressMode(message, target, args[0]);
+        return;
+      case "context-refresh":
+      case "ctx-refresh":
+      case "context":
+      case "ctx":
+        await this.handlers.contextRefresh(message, target, args[0]);
         return;
       case "sendfile":
         await this.handlers.sendFile(message, target, rawText);
