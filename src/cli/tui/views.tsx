@@ -12,6 +12,7 @@ import { channelDisplayName, formatFullDateTime, formatManagedChannelLabel, form
 import type { LauncherDashboard, PairingDashboardSummary, PairingRouteSummary, StartValidation } from "../actions/launcher-actions.js";
 import { formatChannelStatusDetails } from "../serve-wizard.js";
 import type { ContextRefreshTarget, PermissionTarget, Screen, SessionTarget } from "./types.js";
+import { sessionPage } from "./session-pagination.js";
 import {
   channelStatus,
   formatPermission,
@@ -265,27 +266,24 @@ export function AddFeishuView({ screen, onSubmit }: { screen: Extract<Screen, { 
   );
 }
 
-export function WeixinBindingView({ channel, choices, selected }: { channel?: ChannelInstanceRecord; choices?: SessionChoices; selected: number }): React.JSX.Element {
-  // fixed: Frame(4) + 2 KeyValues(2) + session section(3) + action section(6) + footer(2) = 17
-  const viewportRows = useViewportRows(17);
+export function WeixinBindingView({ channel, choices, selected, page }: { channel?: ChannelInstanceRecord; choices?: SessionChoices; selected: number; page: number }): React.JSX.Element {
   const selectable = choices?.selectable ?? [];
-  const sw = visibleWindow(selectable, selected, viewportRows);
-  const actionOffset = selectable.length;
+  const pageData = sessionPage(selectable, page);
+  const actionOffset = pageData.items.length;
   const actions = [
     ["n. 新建 Codex session", "推荐：收到第一条微信私聊后创建"],
     ["m. 手动输入 Session ID", "绑定已有 Codex session"],
     ["0. 暂不绑定", "首条消息自动创建"],
   ];
   return (
-    <Frame title="微信主聊天绑定" subtitle="↑↓ 选择  Enter 执行  n 新建  m 手动输入  0 暂不绑定">
+    <Frame title="微信主聊天绑定" subtitle="↑↓ 选择  ←/→ 翻页  Enter 执行  n 新建  m 手动输入  0 暂不绑定">
       {channel ? <KeyValue label="渠道实例" value={channel.id} /> : <Muted text="这个微信渠道已经不存在。" />}
       {channel?.defaultAccountId ? <KeyValue label="账号" value={channel.defaultAccountId} /> : null}
-      <Section title="可选 session">
+      <Section title={sessionSectionTitle("可选 session", pageData.total, pageData.page, pageData.pageCount)}>
         {selectable.length ? (
           <>
-            <ScrollHint above={sw.above} below={0} />
-            {sw.slice.map((item, i) => <SessionRow key={item.id} index={sw.startIndex + i} active={selected === sw.startIndex + i} session={item} />)}
-            <ScrollHint above={0} below={sw.below} />
+            {pageData.items.map((item, i) => <SessionRow key={item.id} index={i} active={selected === i} session={item} />)}
+            <Muted text={`← 上一页  → 下一页  当前第 ${pageData.page + 1}/${pageData.pageCount} 页`} />
           </>
         ) : <Muted text="暂无可选历史 session。" />}
       </Section>
@@ -501,19 +499,16 @@ export function PairingDetailView({ pairing, selected }: { pairing?: PairingRout
   );
 }
 
-export function SessionSelectView({ choices, selected, binding }: { target: SessionTarget; choices: SessionChoices; selected: number; binding?: BindingSummary }): React.JSX.Element {
-  // fixed: Frame(4) + KeyValue binding(1) + section header(3) + footer(2) = 10
-  const viewportRows = useViewportRows(10);
-  const ssw = visibleWindow(choices.selectable, selected, viewportRows);
+export function SessionSelectView({ choices, selected, binding, page }: { target: SessionTarget; choices: SessionChoices; selected: number; binding?: BindingSummary; page: number }): React.JSX.Element {
+  const pageData = sessionPage(choices.selectable, page);
   return (
-    <Frame title="选择 Codex session" subtitle="Enter 绑定  数字选择  n 新建  m 手动输入">
+    <Frame title="选择 Codex session" subtitle="↑↓ 选择  ←/→ 翻页  Enter 绑定  数字选择  n 新建  m 手动输入">
       {binding ? <KeyValue label="聊天" value={binding.label} /> : null}
-      <Section title="可选">
+      <Section title={sessionSectionTitle("可选", pageData.total, pageData.page, pageData.pageCount)}>
         {choices.selectable.length ? (
           <>
-            <ScrollHint above={ssw.above} below={0} />
-            {ssw.slice.map((item, i) => <SessionRow key={item.id} index={ssw.startIndex + i} active={selected === ssw.startIndex + i} session={item} />)}
-            <ScrollHint above={0} below={ssw.below} />
+            {pageData.items.map((item, i) => <SessionRow key={item.id} index={i} active={selected === i} session={item} />)}
+            <Muted text={`← 上一页  → 下一页  当前第 ${pageData.page + 1}/${pageData.pageCount} 页`} />
           </>
         ) : <Muted text="暂无可选历史 session。" />}
       </Section>
@@ -664,6 +659,10 @@ function formatContextRefreshMode(policy: ContextRefreshPolicy): string {
   if (policy.mode === "reload") return "检测并刷新";
   if (policy.mode === "detect") return "检测提醒";
   return "关闭";
+}
+
+function sessionSectionTitle(label: string, total: number, page: number, pageCount: number): string {
+  return total > 0 ? `${label}（第 ${page + 1}/${pageCount} 页，共 ${total} 个）` : label;
 }
 
 export function LoadingView({ title, message }: { title: string; message: string }): React.JSX.Element {

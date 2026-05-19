@@ -17,6 +17,7 @@ import {
 import type { ChatCodexTuiProps, Flash, PermissionTarget, Screen, SessionTarget } from "./types.js";
 import { screenChannelId, screenIs } from "./types.js";
 import { ConfirmBar, Footer, formatSession } from "./ui-components.js";
+import { SESSION_SELECT_PAGE_SIZE, sessionPage as buildSessionPage } from "./session-pagination.js";
 import {
   AddFeishuView,
   AddWeixinView,
@@ -48,6 +49,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
   const [dashboard, setDashboard] = useState<LauncherDashboard>();
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState(0);
+  const [sessionPageIndex, setSessionPageIndex] = useState(0);
   const [channelCursor, setChannelCursor] = useState(0);
   const [flash, setFlash] = useState<Flash>({ kind: "info", message: "按 ? 查看快捷键。" });
   const [confirm, setConfirm] = useState<{ message: string; yes: () => void | Promise<void> }>();
@@ -76,9 +78,11 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
   }, []);
 
   useEffect(() => {
+    setSessionPageIndex(0);
     if (screen.name === "weixinBinding") {
       const channel = channels.find((item) => item.record.id === screen.channelId)?.record;
-      setSelected(channel ? actions.listWeixinPrimaryChoices(channel)?.selectable.length ?? 0 : 0);
+      const selectableCount = channel ? actions.listWeixinPrimaryChoices(channel)?.selectable.length ?? 0 : 0;
+      setSelected(Math.min(selectableCount, SESSION_SELECT_PAGE_SIZE));
     } else {
       setSelected(screen.name === "home" && (dashboard?.channels.length ?? 0) > 0 ? 7 : 0);
     }
@@ -110,11 +114,15 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
     ? pairings.find((item) => item.route.routeKey === screen.routeKey) ?? actions.getPairingRoute(screen.routeKey)
     : undefined;
   const getMaxSelectableIndex = (): number => {
-    if (screen.name === "sessionSelect") return Math.max(0, getSessionChoices(screen.target).selectable.length - 1);
+    if (screen.name === "sessionSelect") {
+      const page = buildSessionPage(getSessionChoices(screen.target).selectable, sessionPageIndex);
+      return Math.max(0, page.items.length - 1);
+    }
     if (screen.name === "weixinBinding") {
       const channel = channels.find((item) => item.record.id === screen.channelId)?.record;
-      const selectableCount = channel ? actions.listWeixinPrimaryChoices(channel)?.selectable.length ?? 0 : 0;
-      return Math.max(0, selectableCount + 3 - 1);
+      const choices = channel ? actions.listWeixinPrimaryChoices(channel) : undefined;
+      const page = buildSessionPage(choices?.selectable ?? [], sessionPageIndex);
+      return Math.max(0, page.items.length + 3 - 1);
     }
     if (screen.name === "pairing") return Math.max(0, pairings.length - 1);
     if (screen.name === "pairingDetail") return currentPairing?.trusted ? 2 : 1;
@@ -133,6 +141,29 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
   };
 
   const goHome = (): void => setScreen({ name: "home" });
+
+  const moveSessionPage = (delta: number): boolean => {
+    if (screen.name !== "sessionSelect" && screen.name !== "weixinBinding") return false;
+    const choices = screen.name === "sessionSelect"
+      ? getSessionChoices(screen.target)
+      : (() => {
+          const channel = channels.find((item) => item.record.id === screen.channelId)?.record;
+          return channel ? actions.listWeixinPrimaryChoices(channel) ?? { selectable: [], unavailable: [] } : { selectable: [], unavailable: [] };
+        })();
+    const currentPage = buildSessionPage(choices.selectable, sessionPageIndex);
+    const nextPage = buildSessionPage(choices.selectable, currentPage.page + delta);
+    const actionCount = screen.name === "weixinBinding" ? 3 : 0;
+    if (nextPage.page === currentPage.page) return true;
+    const selectedActionIndex = selected >= currentPage.items.length ? selected - currentPage.items.length : undefined;
+    const nextMax = Math.max(0, nextPage.items.length + actionCount - 1);
+    setSessionPageIndex(nextPage.page);
+    if (selectedActionIndex !== undefined) {
+      setSelected(Math.min(nextPage.items.length + selectedActionIndex, nextMax));
+    } else {
+      setSelected(Math.min(selected, Math.max(0, nextPage.items.length - 1)));
+    }
+    return true;
+  };
 
   const openNeedsAttention = (): void => {
     const validation = dashboard?.canStart;
@@ -268,6 +299,13 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
     }
     if (input === "r" && screen.name !== "pairing" && screen.name !== "pairingDetail") {
       void refresh("已刷新。");
+      return;
+    }
+    const pageKey = key as typeof key & { pageUp?: boolean; pageDown?: boolean };
+    if ((key.leftArrow || pageKey.pageUp) && moveSessionPage(-1)) {
+      return;
+    }
+    if ((key.rightArrow || pageKey.pageDown) && moveSessionPage(1)) {
       return;
     }
     if (key.upArrow) {
@@ -483,9 +521,10 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       await handleWeixinPrimaryResult(actions.setWeixinPrimaryNone(channel));
       return;
     }
-    const picked = numericPick(input, choices.selectable.length);
-    if (enter && selected >= choices.selectable.length) {
-      const actionIndex = selected - choices.selectable.length;
+    const page = buildSessionPage(choices.selectable, sessionPageIndex);
+    const picked = numericPick(input, page.items.length);
+    if (enter && selected >= page.items.length) {
+      const actionIndex = selected - page.items.length;
       if (actionIndex === 0) {
         await handleWeixinPrimaryResult(actions.setWeixinPrimaryNew(channel));
         return;
@@ -499,7 +538,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
         return;
       }
     }
-    const choice = picked !== undefined ? choices.selectable[picked] : choices.selectable[selected];
+    const choice = picked !== undefined ? page.items[picked] : page.items[selected];
     if ((enter || picked !== undefined) && choice) {
       await handleWeixinPrimaryResult(actions.setWeixinPrimaryExisting(channel, choice.id));
     }
@@ -660,8 +699,9 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
       return;
     }
     const choices = getSessionChoices(target);
-    const picked = numericPick(input, choices.selectable.length);
-    const choice = picked !== undefined ? choices.selectable[picked] : choices.selectable[selected];
+    const page = buildSessionPage(choices.selectable, sessionPageIndex);
+    const picked = numericPick(input, page.items.length);
+    const choice = picked !== undefined ? page.items[picked] : page.items[selected];
     if (!choice || (!enter && picked === undefined)) return;
     await bindSessionTarget(target, choice.id);
   };
@@ -885,14 +925,14 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
     if (screen.name === "addWeixin") return <AddWeixinView screen={screen} loading={loading} />;
     if (screen.name === "weixinBinding") {
       const channel = channels.find((item) => item.record.id === screen.channelId)?.record;
-      return <WeixinBindingView channel={channel} choices={channel ? actions.listWeixinPrimaryChoices(channel) : undefined} selected={selected} />;
+      return <WeixinBindingView channel={channel} choices={channel ? actions.listWeixinPrimaryChoices(channel) : undefined} selected={selected} page={sessionPageIndex} />;
     }
     if (screen.name === "addFeishu") return <AddFeishuView screen={screen} onSubmit={submitFeishuValue} />;
     if (screen.name === "bindings") return <BindingsView bindings={bindings} pendingBindings={pendingBindings} selected={selected} />;
     if (screen.name === "bindingDetail") return <BindingDetailView binding={currentBinding} selected={selected} />;
     if (screen.name === "pairing") return <PairingView pairing={dashboard.pairing} selected={selected} />;
     if (screen.name === "pairingDetail") return <PairingDetailView pairing={currentPairing} selected={selected} />;
-    if (screen.name === "sessionSelect") return <SessionSelectView target={screen.target} choices={getSessionChoices(screen.target)} selected={selected} binding={screen.target.kind === "route" ? actions.getBinding(screen.target.routeKey) : undefined} />;
+    if (screen.name === "sessionSelect") return <SessionSelectView target={screen.target} choices={getSessionChoices(screen.target)} selected={selected} page={sessionPageIndex} binding={screen.target.kind === "route" ? actions.getBinding(screen.target.routeKey) : undefined} />;
     if (screen.name === "manualSession") return <ManualSessionView value={manualValue} onChange={setManualValue} onSubmit={async (value) => {
       await bindSessionTarget(screen.target, value.trim());
       setScreen(screen.target.kind === "route" ? { name: "bindingDetail", routeKey: screen.target.routeKey } : { name: "weixinBinding", channelId: screen.target.channelId });
@@ -907,7 +947,7 @@ export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboard
     if (screen.name === "status") return <StatusView dashboard={dashboard} />;
     if (screen.name === "startConfirm") return <StartConfirmView validation={dashboard.canStart} lines={dashboard.canStart.ok ? actions.startConfirmationSummary(dashboard.canStart.channels) : [dashboard.canStart.message]} />;
     return <HelpView />;
-  }, [actions, bindings, channelCursor, channels, currentBinding, currentChannel, currentPairing, dashboard, loading, manualValue, screen, selected]);
+  }, [actions, bindings, channelCursor, channels, currentBinding, currentChannel, currentPairing, dashboard, loading, manualValue, screen, selected, sessionPageIndex]);
   const footerContext = screen.name === "home" && channels.length === 0
     ? "firstRun"
     : screen.name === "channels" && channels.length === 0

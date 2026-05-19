@@ -327,6 +327,90 @@ test("Ink TUI shows Weixin primary new-session action as an Enter-selectable row
   view.unmount();
 });
 
+test("Ink TUI keeps Weixin primary session list at the newest page when action row is selected", async () => {
+  const dashboard = dashboardFixture();
+  dashboard.channels[0].record.id = "weixin-wx-main";
+  dashboard.channels[0].record.type = "weixin";
+  dashboard.channels[0].record.defaultAccountId = "wx-main";
+  dashboard.channels[0].status.channelId = "weixin-wx-main";
+  dashboard.channels[0].status.account = "wx-main";
+  const selectable = Array.from({ length: 120 }, (_, index) => ({
+    id: `session-${String(index + 1).padStart(3, "0")}`,
+    shortId: `s${String(index + 1).padStart(3, "0")}`,
+    title: index === 0 ? "S001-newest" : index === 119 ? "S120-oldest" : `S${String(index + 1).padStart(3, "0")}`,
+    updatedAt: `2026-05-${String(Math.max(1, 28 - (index % 28))).padStart(2, "0")}T00:00:00.000Z`,
+    current: false,
+  }));
+  const view = render(<ChatCodexTui actions={mockActions(dashboard, {
+    listWeixinPrimaryChoices: () => ({ selectable, unavailable: [] }),
+  })} onDone={() => undefined} />);
+  await waitForInk();
+
+  view.stdin.write("c");
+  await waitForInk();
+  view.stdin.write("\r");
+  await waitForInk();
+  view.stdin.write("\r");
+  await waitForInk();
+
+  const frame = cleanFrame(view);
+  assert.match(frame, /微信主聊天绑定/);
+  assert.match(frame, /第 1\/12 页/);
+  assert.match(frame, /S001-newest/);
+  assert.doesNotMatch(frame, /S120-oldest/);
+
+  view.stdin.write("\u001B[C");
+  await waitForInk();
+  assert.match(cleanFrame(view), /第 2\/12 页/);
+  assert.match(cleanFrame(view), /S011/);
+
+  view.unmount();
+});
+
+test("Ink TUI pages route session selection and numeric picks the current page", async () => {
+  const dashboard = dashboardFixture();
+  const selectable = Array.from({ length: 25 }, (_, index) => ({
+    id: `session-${String(index + 1).padStart(3, "0")}`,
+    shortId: `s${String(index + 1).padStart(3, "0")}`,
+    title: `S${String(index + 1).padStart(3, "0")}`,
+    updatedAt: "2026-05-18T00:00:00.000Z",
+    current: false,
+  }));
+  let boundSessionId: string | undefined;
+  const view = render(<ChatCodexTui actions={mockActions(dashboard, {
+    listSessionChoices: () => ({ selectable, unavailable: [] }),
+    bindExistingSession: (_routeKey, sessionId) => {
+      boundSessionId = sessionId;
+      const session = selectable.find((item) => item.id === sessionId) ?? selectable[0];
+      return { ok: true, binding: dashboard.bindings[0], session };
+    },
+  })} onDone={() => undefined} />);
+  await waitForInk();
+
+  view.stdin.write("b");
+  await waitForInk();
+  view.stdin.write("\r");
+  await waitForInk();
+  view.stdin.write("\r");
+  await waitForInk();
+
+  assert.match(cleanFrame(view), /选择 Codex session/);
+  assert.match(cleanFrame(view), /第 1\/3 页/);
+  assert.match(cleanFrame(view), /S001/);
+  assert.doesNotMatch(cleanFrame(view), /S011/);
+
+  view.stdin.write("\u001B[C");
+  await waitForInk();
+  assert.match(cleanFrame(view), /第 2\/3 页/);
+  assert.match(cleanFrame(view), /1\. 可用\s+S011/);
+
+  view.stdin.write("1");
+  await waitForInk();
+  assert.equal(boundSessionId, "session-011");
+
+  view.unmount();
+});
+
 test("Ink TUI updates new session workdir from current directory and manual input", async () => {
   const dashboard = dashboardFixture();
   const view = render(<ChatCodexTui actions={mockActions(dashboard)} onDone={() => undefined} />);
@@ -628,7 +712,9 @@ function mockActions(
   overrides: {
     addFeishuBot?: (input: { appId?: string; appSecret?: string; domain?: string; accountId?: string }) => Promise<unknown>;
     checkWeixinLogin?: () => Promise<unknown>;
+    listSessionChoices?: () => { selectable: unknown[]; unavailable: unknown[] };
     listWeixinPrimaryChoices?: () => { selectable: unknown[]; unavailable: unknown[] };
+    bindExistingSession?: (routeKey: string, sessionId: string) => unknown;
     setWeixinPrimaryNew?: (channel: unknown) => unknown;
     trustRouteManually?: (routeKey: string) => unknown;
     revokeRouteTrust?: (routeKey: string, options?: { unbindSession?: boolean }) => unknown;
@@ -660,7 +746,8 @@ function mockActions(
     checkWeixinLogin: overrides.checkWeixinLogin ?? (async () => ({ state: "pending", message: "还没有检测到扫码确认。" })),
     cancelWeixinLogin: () => ({ state: "cancelled", message: "已返回管理渠道，未添加微信账号。" }),
     addFeishuBot: overrides.addFeishuBot ?? (async () => ({ ok: true, message: "飞书机器人已添加。" })),
-    listSessionChoices: () => ({ selectable: [], unavailable: [] }),
+    listSessionChoices: overrides.listSessionChoices ?? (() => ({ selectable: [], unavailable: [] })),
+    bindExistingSession: overrides.bindExistingSession ?? (() => ({ ok: true, binding: dashboard.bindings[0], session: { id: "session", shortId: "session" } })),
     listWeixinPrimaryChoices: overrides.listWeixinPrimaryChoices ?? (() => ({ selectable: [], unavailable: [] })),
     setWeixinPrimaryNew: overrides.setWeixinPrimaryNew ?? (() => ({ ok: true, message: "已设置：收到第一条微信私聊后创建新 session。" })),
     setWeixinPrimaryNone: () => ({ ok: true, message: "已设置：暂不绑定，首条消息自动创建。" }),

@@ -429,7 +429,7 @@ export class LauncherActions {
   listWeixinPrimaryChoices(channel: ChannelInstanceRecord): SessionChoices | undefined {
     const accountId = channel.defaultAccountId;
     if (!accountId) return undefined;
-    return this.bindingActions(15).listSessionChoices(this.weixinPrimaryPendingOwner(channel.id, accountId));
+    return this.bindingActions().listSessionChoices(this.weixinPrimaryPendingOwner(channel.id, accountId));
   }
 
   setWeixinPrimaryNew(channel: ChannelInstanceRecord): WeixinPrimaryBindingResult {

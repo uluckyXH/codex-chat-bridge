@@ -115,7 +115,7 @@ export async function configureWeixinPrimaryBinding(
   const pendingId = weixinPrimaryPendingId(channel.id, accountId);
   const pendingOwner = pendingBindingOwnerRouteKey(pendingId);
   for (;;) {
-    const choices = new BindingActions(state, { cwd: startup.cwd, sessionLimit: 15 }).listSessionChoices(pendingOwner);
+    const choices = new BindingActions(state, { cwd: startup.cwd }).listSessionChoices(pendingOwner);
     console.log("");
     const lines = [
       "微信主聊天绑定",

@@ -121,3 +121,54 @@ test("LauncherActions manages route trust and optional session unbind", async ()
   assert.equal(reloaded.getBinding(routeKey), undefined);
   assert.equal(reloaded.listRoutes()[0]?.activeSessionId, undefined);
 });
+
+test("LauncherActions lists the same recent sessions for Weixin primary and route binding", () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-launcher-actions-"));
+  const bridgeDir = path.join(baseDir, "state", "bridge");
+  const codexHome = path.join(baseDir, "codex-home");
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, "session_index.jsonl"), Array.from({ length: 30 }, (_, index) => {
+    const day = String(30 - index).padStart(2, "0");
+    const id = `session-${String(index + 1).padStart(2, "0")}`;
+    return JSON.stringify({
+      id,
+      thread_name: `Session ${index + 1}`,
+      updated_at: `2026-05-${day}T00:00:00.000Z`,
+    });
+  }).join("\n"));
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  try {
+    const configStore = new ChannelConfigStore({ bridgeDir });
+    const channel = configStore.upsertChannelInstance({
+      id: "weixin-wx-main",
+      type: "weixin",
+      accountId: "wx-main",
+    });
+    const actions = new LauncherActions(
+      {
+        adapterMode: "app-server",
+        cwd: baseDir,
+        policy: { permissionMode: "approval", sandbox: "workspace-write" },
+      },
+      { unboundRoutePolicy: "auto_new" },
+      new ChannelActions({
+        configStore,
+        env: {},
+      }),
+    );
+
+    const weixinChoices = actions.listWeixinPrimaryChoices(channel);
+    const routeChoices = actions.listSessionChoices("weixin-wx-main:wx-main:direct:route");
+
+    assert.ok(weixinChoices);
+    assert.equal(weixinChoices.selectable.length, 30);
+    assert.deepEqual(
+      weixinChoices.selectable.map((session) => session.id),
+      routeChoices.selectable.map((session) => session.id),
+    );
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});

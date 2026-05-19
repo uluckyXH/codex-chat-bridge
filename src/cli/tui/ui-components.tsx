@@ -225,7 +225,8 @@ function footerHint(screen: Screen["name"], context?: "firstRun" | "emptyChannel
   if (screen === "pairingDetail") return "↑↓ 选择  Enter 执行  m 手动信任  r 撤销信任  u 撤销并解绑  Esc 返回";
   if (screen === "addWeixin") return "Enter 获取/检查二维码  Esc 返回";
   if (screen === "addFeishu") return "输入后 Enter 下一步  Secret 不回显  Esc 返回";
-  if (screen === "sessionSelect") return "↑↓ 选择  Enter 绑定  数字直选  n 新建  m 手动输入  Esc 返回";
+  if (screen === "weixinBinding") return "↑↓ 选择  ←/→ 翻页  Enter 执行  数字选本页  n 新建  m 手动输入  0 暂不绑定";
+  if (screen === "sessionSelect") return "↑↓ 选择  ←/→ 翻页  Enter 绑定  数字选本页  n 新建  m 手动输入  Esc 返回";
   if (screen === "permission") return "↑↓ 选择  Enter 保存  完全权限需确认  Esc 返回";
   if (screen === "contextRefresh") return "↑↓ 选择  Enter 保存  Esc 返回";
   if (screen === "workdir") return "↑↓ 选择  Enter 保存  1/d 当前目录  2/m 输入路径  Esc 返回";
