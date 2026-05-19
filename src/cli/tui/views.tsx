@@ -220,7 +220,7 @@ export function ChannelRenameView({ channel, value, onChange, onSubmit }: { chan
 }
 
 export function AddWeixinView({ screen, loading }: { screen: Extract<Screen, { name: "addWeixin" }>; loading: boolean }): React.JSX.Element {
-  const subtitle = screen.login ? "5 秒自动检查  Enter 立即检查  Esc 返回" : loading ? "正在获取二维码  Esc 返回" : "Enter 重试  Esc 返回";
+  const subtitle = screen.login ? "5 秒自动检查  Enter 立即检查  c 复制链接  Esc 返回" : loading ? "正在获取二维码  Esc 返回" : "Enter 重试  Esc 返回";
   return (
     <Frame title="添加微信账号" subtitle={subtitle}>
       {!screen.login ? <Muted text={loading ? "正在发起扫码登录..." : "二维码未显示。按 Enter 重试，或按 Esc 返回。"} /> : (
@@ -229,7 +229,13 @@ export function AddWeixinView({ screen, loading }: { screen: Extract<Screen, { n
           <Box marginY={1} flexDirection="column">
             {screen.login.qrCode ? screen.login.qrCode.split("\n").map((line, index) => <Text key={index}>{line}</Text>) : <Muted text="二维码渲染失败，请使用备用链接。" />}
           </Box>
-          {screen.login.fallbackLink ? <Text>备用链接: {truncate(screen.login.fallbackLink, 72)}</Text> : null}
+          {screen.login.fallbackLink ? (
+            <Box flexDirection="column">
+              <Text>完整备用链接:</Text>
+              <Text wrap="wrap">{screen.login.fallbackLink}</Text>
+              <Muted text="按 c 可复制完整链接。" />
+            </Box>
+          ) : null}
         </>
       )}
     </Frame>

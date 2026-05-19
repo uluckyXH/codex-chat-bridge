@@ -11,6 +11,7 @@ import { runRuntimeLogTui } from "../../src/cli/tui/run-runtime-log.js";
 import type { LauncherActions, LauncherDashboard } from "../../src/cli/actions/launcher-actions.js";
 
 const ANSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+const WEIXIN_LOGIN_LINK = "https://login.example/qr?token=abcdefghijklmnopqrstuvwxyz0123456789-full-link-tail";
 
 function cleanFrame(view: { lastFrame(): string | undefined }): string {
   return (view.lastFrame() ?? "").replace(ANSI_PATTERN, "");
@@ -204,12 +205,42 @@ test("Ink TUI first run guides user to add channels with Enter and number shortc
   assert.match(cleanFrame(view), /添加微信账号/);
   assert.match(cleanFrame(view), /请使用微信扫码/);
   assert.match(cleanFrame(view), /QR-CODE/);
+  assert.match(cleanFrame(view), /full-link-tail/);
 
   view.stdin.write("\u001B");
   await waitForInk();
   view.stdin.write("2");
   await waitForInk();
   assert.match(cleanFrame(view), /添加飞书机器人/);
+
+  view.unmount();
+});
+
+test("Ink TUI copies full Weixin login fallback link", async () => {
+  const copied: string[] = [];
+  const view = render(<ChatCodexTui
+    actions={mockActions(emptyDashboardFixture())}
+    copyToClipboard={async (text) => {
+      copied.push(text);
+      return { ok: true, message: "copied" };
+    }}
+    onDone={() => undefined}
+  />);
+  await waitForInk();
+
+  view.stdin.write("1");
+  await waitForInk();
+
+  const frame = cleanFrame(view);
+  assert.match(frame, /完整备用链接/);
+  assert.match(frame, /full-link-tail/);
+  assert.match(frame, /按 c 可复制完整链接/);
+
+  view.stdin.write("c");
+  await waitForInk();
+
+  assert.deepEqual(copied, [WEIXIN_LOGIN_LINK]);
+  assert.match(cleanFrame(view), /已复制微信登录备用链接/);
 
   view.unmount();
 });
@@ -621,7 +652,7 @@ function mockActions(
         sessionKey: "login-session",
       },
       qrCode: "QR-CODE",
-      fallbackLink: "https://login.example/qr",
+      fallbackLink: WEIXIN_LOGIN_LINK,
     }),
     checkWeixinLogin: overrides.checkWeixinLogin ?? (async () => ({ state: "pending", message: "还没有检测到扫码确认。" })),
     cancelWeixinLogin: () => ({ state: "cancelled", message: "已返回管理渠道，未添加微信账号。" }),

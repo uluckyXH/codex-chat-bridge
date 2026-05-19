@@ -1,4 +1,5 @@
 import type { FeishuCredentials } from "../../channels/feishu/feishu-types.js";
+import type { ClipboardWriteResult } from "../../runtime/clipboard.js";
 import type { ChannelInstanceRecord } from "../../state/persistent-state-types.js";
 import type { SessionDisplay } from "../actions/binding-actions.js";
 import type { LauncherActions } from "../actions/launcher-actions.js";
@@ -10,6 +11,7 @@ export interface ChatCodexTuiResult {
 export interface ChatCodexTuiProps {
   actions: LauncherActions;
   onDone(result: ChatCodexTuiResult): void;
+  copyToClipboard?(text: string): Promise<ClipboardWriteResult>;
 }
 
 export type Screen =

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, useApp, useInput } from "ink";
 import type { CodexRunPolicy } from "../../codex/codex-cli.js";
 import type { FeishuCredentials } from "../../channels/feishu/feishu-types.js";
+import { writeClipboardText as writeClipboardTextDefault } from "../../runtime/clipboard.js";
 import { chatCodexTitle } from "../../runtime/package-info.js";
 import type { BindingSummary, SessionChoices } from "../actions/binding-actions.js";
 import { formatManagedChannelLabel } from "../actions/channel-actions.js";
@@ -37,7 +38,7 @@ import {
   WorkdirView,
 } from "./views.js";
 
-export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.Element {
+export function ChatCodexTui({ actions, onDone, copyToClipboard = writeClipboardTextDefault }: ChatCodexTuiProps): React.JSX.Element {
   const { exit } = useApp();
   const [screen, setScreen] = useState<Screen>({ name: "home" });
   const [dashboard, setDashboard] = useState<LauncherDashboard>();
@@ -276,7 +277,7 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     if (screen.name === "home") handleHomeInput(input, key.return);
     else if (screen.name === "channels") void handleChannelsInput(input, key.return);
     else if (screen.name === "channelDetail" && currentChannel) void handleChannelDetailInput(input, key.return, currentChannel.record);
-    else if (screen.name === "addWeixin") void handleAddWeixinInput(key.return);
+    else if (screen.name === "addWeixin") void handleAddWeixinInput(input, key.return);
     else if (screen.name === "weixinBinding") void handleWeixinBindingInput(input, key.return);
     else if (screen.name === "bindings") void handleBindingsInput(input, key.return);
     else if (screen.name === "bindingDetail" && currentBinding) void handleBindingDetailInput(input, key.return, currentBinding);
@@ -431,8 +432,17 @@ export function ChatCodexTui({ actions, onDone }: ChatCodexTuiProps): React.JSX.
     }
   };
 
-  const handleAddWeixinInput = async (enter: boolean): Promise<void> => {
-    if (!enter || !screenIs("addWeixin", screen) || loading) return;
+  const handleAddWeixinInput = async (input: string, enter: boolean): Promise<void> => {
+    if (!screenIs("addWeixin", screen) || loading) return;
+    if (input.toLowerCase() === "c" && screen.login?.fallbackLink) {
+      const result = await copyToClipboard(screen.login.fallbackLink);
+      setFlash({
+        kind: result.ok ? "success" : "error",
+        message: result.ok ? "已复制微信登录备用链接。" : `复制失败：${result.message}`,
+      });
+      return;
+    }
+    if (!enter) return;
     if (!screen.login) {
       await openAddWeixinLogin();
       return;

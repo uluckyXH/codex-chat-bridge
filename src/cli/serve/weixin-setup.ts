@@ -4,6 +4,7 @@ import { FileWeixinAccountStore } from "../../channels/weixin/weixin-account-sto
 import { displayWeixinQrCode } from "../../channels/weixin/weixin-qr-display.js";
 import { findCodexSessionById, formatCodexSessionTitleForDisplay } from "../../codex/codex-cli.js";
 import type { ChannelLoginResult } from "../../protocol/channel.js";
+import { writeClipboardText } from "../../runtime/clipboard.js";
 import { BindingActions, formatOwnerRouteLabel, formatSessionActiveTime, type SessionChoices } from "../actions/binding-actions.js";
 import type { ChannelActions } from "../actions/channel-actions.js";
 import type { PreparedServeStartup } from "../launcher-types.js";
@@ -78,12 +79,18 @@ async function waitWeixinLoginFromQrMenu(
       "微信扫码登录",
       "",
       "扫码并在手机上确认后，按回车检查登录结果。",
+      started.qrCodeText ? "输入 c 复制完整备用链接。" : undefined,
       "不想登录就输入 0 返回管理渠道。",
-    ].join("\n"));
-    const answer = normalizeText(await rl.question("请选择 [回车检查 / 0 返回]: "));
+    ].filter(Boolean).join("\n"));
+    const answer = normalizeText(await rl.question("请选择 [回车检查 / c 复制 / 0 返回]: "));
     if (answer === "0" || isBackText(answer)) return undefined;
-    if (answer && answer !== "c" && answer !== "check" && answer !== "检查") {
-      console.log("没有这个选项。按回车检查登录结果，或输入 0 返回。");
+    if ((answer === "c" || answer === "copy" || answer === "复制") && started.qrCodeText) {
+      const copied = await writeClipboardText(started.qrCodeText);
+      console.log(copied.ok ? "已复制微信登录备用链接。" : `复制失败: ${copied.message}`);
+      continue;
+    }
+    if (answer && answer !== "check" && answer !== "检查") {
+      console.log("没有这个选项。按回车检查登录结果，输入 c 复制链接，或输入 0 返回。");
       continue;
     }
     const result = await channel.waitLogin(started.sessionKey, WEIXIN_LOGIN_CHECK_TIMEOUT_MS);
